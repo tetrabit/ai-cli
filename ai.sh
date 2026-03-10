@@ -79,7 +79,7 @@ check_claude() {
 check_gh_cli() {
     echo -e "${CYAN}==> Checking GitHub CLI...${NC}"
     local current
-    current=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+    current=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
     if [[ -z "$current" ]]; then
         echo -e "${YELLOW}  Not installed${NC}"
         return
@@ -94,7 +94,7 @@ check_gh_cli() {
             output=$(sudo apt-get update -qq 2>&1 && sudo apt-get install --only-upgrade -qq gh 2>&1) || true
         fi
         local new_ver
-        new_ver=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+        new_ver=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
         if [[ "$current" == "$new_ver" ]]; then
             echo -e "${GREEN}  Already up to date (${current})${NC}"
         else
@@ -108,7 +108,7 @@ check_gh_cli() {
             sudo dnf install gh --repo gh-cli -y -q 2>&1 >/dev/null || true
         fi
         local new_ver
-        new_ver=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+        new_ver=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
         if [[ "$current" == "$new_ver" ]]; then
             echo -e "${GREEN}  Already up to date (${current})${NC}"
         else
@@ -121,7 +121,7 @@ check_gh_cli() {
             brew upgrade gh 2>&1 >/dev/null || true
         fi
         local new_ver
-        new_ver=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+        new_ver=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
         if [[ "$current" == "$new_ver" ]]; then
             echo -e "${GREEN}  Already up to date (${current})${NC}"
         else
@@ -142,9 +142,9 @@ check_gh_copilot() {
         local output
         output=$(gh copilot update 2>&1 || true)
     fi
-    if echo "$output" | grep -qP "No update needed.*current version is \K[^\s,]+" 2>/dev/null; then
+    if echo "$output" | grep -q "No update needed"; then
         local ver
-        ver=$(echo "$output" | grep -oP "current version is \K[^\s,]+" || true)
+        ver=$(echo "$output" | sed -n 's/.*current version is \([^, ]*\).*/\1/p' || true)
         echo -e "${GREEN}  Already up to date (${ver})${NC}"
     elif echo "$output" | grep -qi "updated\|updating"; then
         echo -e "${YELLOW}  Updated successfully${NC}"

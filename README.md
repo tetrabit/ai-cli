@@ -2,13 +2,29 @@
 
 A single `ai` command to launch and update all your AI coding assistants.
 
+## Platform Support
+
+| Platform | Script | Status |
+|----------|--------|--------|
+| Windows | `ai.ps1` | Tested |
+| Linux | `ai.sh` | Tested |
+| macOS | `ai.sh` | **Untested** — should work via Homebrew + npm, but has not been verified on a Mac. PRs welcome. |
+
 ## Quick Install
+
+**Linux / macOS:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/main/install.sh | bash
 ```
 
-On Windows (PowerShell only):
+**Windows (Git Bash / MSYS2):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/main/install.sh | bash
+```
+
+**Windows (PowerShell only):**
 
 ```powershell
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tetrabit/ai-cli/main/ai.ps1" -OutFile "C:\tools\ai.ps1"
@@ -29,24 +45,28 @@ All extra arguments are forwarded to the underlying tool.
 
 ```
 ai update
+ai update --verbose    # show full output from all tools
 ```
 
 Checks each tool for updates before installing — npm packages are skipped if already at the latest version.
 
-| Tool | Windows | Linux / macOS |
-|------|---------|---------------|
-| Claude Code | `winget upgrade` | `claude update` |
-| GitHub CLI | `winget upgrade` | — |
-| GitHub Copilot CLI | `gh copilot update` | `gh copilot update` |
-| Gemini CLI | npm version check | npm version check |
-| Codex CLI | npm version check | npm version check |
-| OpenCode | npm version check | npm version check |
+| Tool | Windows | Linux | macOS |
+|------|---------|-------|-------|
+| Claude Code | `winget upgrade` | `claude update` | `claude update` |
+| GitHub CLI | `winget upgrade` | `apt` / `dnf` | `brew upgrade gh` |
+| GitHub Copilot CLI | `gh copilot update` | `gh copilot update` | `gh copilot update` |
+| Gemini CLI | npm version check | npm version check | npm version check |
+| Codex CLI | npm version check | npm version check | npm version check |
+| OpenCode | npm version check | npm version check | npm version check |
 
 Example output:
 
 ```
 ==> Checking Claude Code...
   Already up to date (2.1.70)
+
+==> Checking GitHub CLI...
+  Already up to date (2.87.3)
 
 ==> Checking GitHub Copilot CLI...
   Already up to date (1.0.3)
@@ -66,4 +86,5 @@ All AI tools checked.
 ## Prerequisites
 
 - **Windows:** [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
-- **Linux / macOS:** [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
+- **Linux:** [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
+- **macOS:** [Homebrew](https://brew.sh/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
