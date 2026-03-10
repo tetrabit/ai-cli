@@ -6,6 +6,19 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
+VERBOSE=false
+for arg in "$@"; do
+    if [[ "$arg" == "--verbose" || "$arg" == "-v" ]]; then
+        VERBOSE=true
+    fi
+done
+# Strip --verbose / -v from args
+args=()
+for arg in "$@"; do
+    [[ "$arg" == "--verbose" || "$arg" == "-v" ]] || args+=("$arg")
+done
+set -- "${args[@]+"${args[@]}"}"
+
 check_npm_package() {
     local display_name="$1"
     local package="$2"
@@ -17,19 +30,33 @@ check_npm_package() {
 
     if [[ -z "$current" ]]; then
         echo -e "${YELLOW}  Not installed, installing ${latest}...${NC}"
-        npm install -g "${package}@latest" --loglevel error
+        if $VERBOSE; then
+            npm install -g "${package}@latest"
+        else
+            npm install -g "${package}@latest" --loglevel error
+        fi
     elif [[ "$current" == "$latest" ]]; then
         echo -e "${GREEN}  Already up to date (${current})${NC}"
     else
         echo -e "${YELLOW}  Updating ${current} -> ${latest}...${NC}"
-        npm install -g "${package}@latest" --loglevel error
+        if $VERBOSE; then
+            npm install -g "${package}@latest"
+        else
+            npm install -g "${package}@latest" --loglevel error
+        fi
     fi
 }
 
 check_claude() {
     echo -e "${CYAN}==> Checking Claude Code...${NC}"
-    local output
-    output=$(claude update 2>&1 || true)
+    if $VERBOSE; then
+        claude update 2>&1 | tee /tmp/ai-claude-update.log || true
+        local output
+        output=$(cat /tmp/ai-claude-update.log)
+    else
+        local output
+        output=$(claude update 2>&1 || true)
+    fi
     if echo "$output" | grep -qi "already.*latest\|up to date\|no update"; then
         local ver
         ver=$(claude --version 2>/dev/null || true)
@@ -51,9 +78,15 @@ check_claude() {
 
 check_gh_copilot() {
     echo -e "${CYAN}==> Checking GitHub Copilot CLI...${NC}"
-    local output
-    output=$(gh copilot update 2>&1 || true)
-    if echo "$output" | grep -qP "No update needed.*current version is \K[^\s,]+"; then
+    if $VERBOSE; then
+        gh copilot update 2>&1 | tee /tmp/ai-copilot-update.log || true
+        local output
+        output=$(cat /tmp/ai-copilot-update.log)
+    else
+        local output
+        output=$(gh copilot update 2>&1 || true)
+    fi
+    if echo "$output" | grep -qP "No update needed.*current version is \K[^\s,]+" 2>/dev/null; then
         local ver
         ver=$(echo "$output" | grep -oP "current version is \K[^\s,]+" || true)
         echo -e "${GREEN}  Already up to date (${ver})${NC}"
@@ -94,5 +127,8 @@ case "$tool" in
         echo "  ai gemini   -> gemini --yolo"
         echo "  ai copilot  -> gh copilot --yolo"
         echo "  ai update   -> update all AI tools"
+        echo ""
+        echo "Options:"
+        echo "  ai update --verbose  -> show full output from all tools"
         ;;
 esac
