@@ -76,6 +76,62 @@ check_claude() {
     fi
 }
 
+check_gh_cli() {
+    echo -e "${CYAN}==> Checking GitHub CLI...${NC}"
+    local current
+    current=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+    if [[ -z "$current" ]]; then
+        echo -e "${YELLOW}  Not installed${NC}"
+        return
+    fi
+
+    # Detect package manager and upgrade
+    if command -v apt-get &>/dev/null; then
+        local output
+        if $VERBOSE; then
+            output=$(sudo apt-get update 2>&1 && sudo apt-get install --only-upgrade gh 2>&1 | tee /dev/stderr) || true
+        else
+            output=$(sudo apt-get update -qq 2>&1 && sudo apt-get install --only-upgrade -qq gh 2>&1) || true
+        fi
+        local new_ver
+        new_ver=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+        if [[ "$current" == "$new_ver" ]]; then
+            echo -e "${GREEN}  Already up to date (${current})${NC}"
+        else
+            echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
+        fi
+    elif command -v dnf &>/dev/null; then
+        local output
+        if $VERBOSE; then
+            sudo dnf install gh --repo gh-cli -y 2>&1 | tee /dev/stderr || true
+        else
+            sudo dnf install gh --repo gh-cli -y -q 2>&1 >/dev/null || true
+        fi
+        local new_ver
+        new_ver=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+        if [[ "$current" == "$new_ver" ]]; then
+            echo -e "${GREEN}  Already up to date (${current})${NC}"
+        else
+            echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
+        fi
+    elif command -v brew &>/dev/null; then
+        if $VERBOSE; then
+            brew upgrade gh 2>&1 || true
+        else
+            brew upgrade gh 2>&1 >/dev/null || true
+        fi
+        local new_ver
+        new_ver=$(gh --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+        if [[ "$current" == "$new_ver" ]]; then
+            echo -e "${GREEN}  Already up to date (${current})${NC}"
+        else
+            echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
+        fi
+    else
+        echo -e "${YELLOW}  Installed (${current}) — could not detect package manager to upgrade${NC}"
+    fi
+}
+
 check_gh_copilot() {
     echo -e "${CYAN}==> Checking GitHub Copilot CLI...${NC}"
     if $VERBOSE; then
@@ -99,6 +155,8 @@ check_gh_copilot() {
 
 do_update() {
     check_claude
+    echo ""
+    check_gh_cli
     echo ""
     check_gh_copilot
     echo ""
