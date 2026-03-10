@@ -8,7 +8,7 @@ A single `ai` command to launch and update all your AI coding assistants.
 |----------|--------|--------|
 | Windows | `ai.ps1` | Tested |
 | Linux | `ai.sh` | Tested |
-| macOS | `ai.sh` | **Untested** — should work via Homebrew + npm, but has not been verified on a Mac. PRs welcome. |
+| macOS | `ai.sh` | **Untested** — should work via Homebrew + npm, but has not been verified on a Mac. |
 
 ## Quick Install
 
