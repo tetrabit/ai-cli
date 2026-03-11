@@ -49,6 +49,11 @@ check_npm_package() {
 
 check_claude() {
     echo -e "${CYAN}==> Checking Claude Code...${NC}"
+    if ! command -v claude >/dev/null 2>&1; then
+        echo -e "${YELLOW}  Not installed${NC}"
+        return
+    fi
+
     if $VERBOSE; then
         claude update 2>&1 | tee /tmp/ai-claude-update.log || true
         local output
@@ -65,6 +70,8 @@ check_claude() {
         else
             echo -e "${GREEN}  Already up to date${NC}"
         fi
+    elif echo "$output" | grep -qi "command not found\|not recognized\|no such file"; then
+        echo -e "${YELLOW}  Not installed${NC}"
     else
         local ver
         ver=$(claude --version 2>/dev/null || true)

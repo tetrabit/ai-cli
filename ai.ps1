@@ -19,7 +19,7 @@ function Update-WingetPackage($DisplayName, $PackageId) {
     Write-Host "==> Checking $DisplayName..." -ForegroundColor Cyan
     $ver = Get-WingetVersion $PackageId
     if (-not $ver) {
-        Write-Host "  Not installed via winget" -ForegroundColor Yellow
+        Write-Host "  Not installed" -ForegroundColor Yellow
         return
     }
     $output = winget upgrade $PackageId --disable-interactivity 2>&1 | Out-String
