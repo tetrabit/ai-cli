@@ -164,8 +164,6 @@ do_update() {
     echo ""
     check_npm_package "Codex CLI" "@openai/codex"
     echo ""
-    check_npm_package "OpenCode" "opencode-ai"
-    echo ""
     echo -e "${GREEN}All AI tools checked.${NC}"
 }
 
