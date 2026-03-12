@@ -433,72 +433,75 @@ PY
 
 usage_copilot() {
     echo -e "${CYAN}==> GitHub Copilot CLI...${NC}"
-    local sdk_path
     local output
 
-    sdk_path=$(python3 <<'PY'
+    if ! output=$(python3 <<'PY' 2>/dev/null
+import json
+import sys
+import urllib.request
+from datetime import datetime
 from pathlib import Path
 
-paths = sorted(Path.home().glob('.copilot/pkg/universal/*/copilot-sdk/index.js'))
-print(paths[-1] if paths else "")
-PY
+
+def fmt_reset(value):
+    if not value:
+        return ""
+    try:
+        value = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return value
+
+
+path = Path.home() / ".copilot" / "config.json"
+if not path.exists():
+    sys.exit(1)
+
+config = json.loads(path.read_text())
+token = next(iter((config.get("copilot_tokens") or {}).values()), None)
+if not token:
+    sys.exit(1)
+
+request = urllib.request.Request(
+    "https://api.github.com/copilot_internal/user",
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "ai-cli",
+    },
 )
 
-    if [[ -z "$sdk_path" ]]; then
-        echo -e "${YELLOW}  Usage unavailable${NC}"
-        return
-    fi
+with urllib.request.urlopen(request, timeout=30) as response:
+    payload = json.loads(response.read().decode("utf-8"))
 
-    if ! output=$(node --input-type=module - "$sdk_path" <<'JS' 2>/dev/null
-const sdkPath = process.argv[2];
-const { CopilotClient } = await import(sdkPath);
+rows = []
+for key, value in sorted((payload.get("quota_snapshots") or {}).items()):
+    if not value:
+        continue
 
-function formatReset(value) {
-  if (!value) {
-    return "";
-  }
+    entitlement = value.get("entitlement") or value.get("entitlementRequests") or 0
+    if key != "premium_interactions" and entitlement <= 0:
+        continue
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
+    percent = value.get("percent_remaining")
+    if percent is None:
+        percent = value.get("remainingPercentage")
+        if percent is not None and float(percent) <= 1.0:
+            percent = float(percent) * 100.0
 
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hour = String(date.getHours()).padStart(2, '0');
-  const minute = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day} ${hour}:${minute}`;
-}
+    if percent is None:
+        continue
 
-const client = new CopilotClient({ autoStart: true });
-try {
-  await client.start();
-  const quota = await client.rpc.account.getQuota();
-  const snapshots = quota.quotaSnapshots || {};
+    timestamp = value.get("timestamp_utc") or value.get("resetDate")
+    rows.append((key.replace("_", " "), float(percent), fmt_reset(timestamp)))
 
-  for (const [key, value] of Object.entries(snapshots)) {
-    if (!value) {
-      continue;
-    }
-    if (key !== 'premium_interactions' && (!value.entitlementRequests || value.entitlementRequests <= 0)) {
-      continue;
-    }
+if not rows:
+    sys.exit(1)
 
-    let percent = Number(value.remainingPercentage ?? 0);
-    if (percent <= 1) {
-      percent *= 100;
-    }
-
-    const label = key.replace(/_/g, ' ');
-    console.log(`${label}\t${percent.toFixed(1)}\t${formatReset(value.resetDate)}`);
-  }
-} finally {
-  try {
-    await client.stop();
-  } catch {}
-}
-JS
+for label, percent, reset_at in rows:
+    print(f"{label}\t{percent:.1f}\t{reset_at}")
+PY
     ); then
         echo -e "${YELLOW}  Usage unavailable${NC}"
         return
