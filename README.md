@@ -83,6 +83,37 @@ Example output:
 All AI tools checked.
 ```
 
+## Check Remaining Usage
+
+```bash
+ai usage
+```
+
+Shows remaining usage as percentage bars for the supported providers in `ai.sh`:
+
+- Claude Code: 5-hour and 7-day limits
+- Codex CLI: 5-hour and 7-day limits
+- Gemini CLI: model quota buckets returned by Gemini Code Assist
+- GitHub Copilot CLI: premium request quota
+
+Example output:
+
+```text
+==> Claude Code...
+  5h limit           [####################]  100.0% left
+  7d limit           [--------------------]    0.0% left  resets 2026-03-15 00:00
+
+==> Codex CLI...
+  5h limit           [##############------]   68.0% left  resets 2026-03-12 16:19
+  7d limit           [###########---------]   55.0% left  resets 2026-03-18 11:15
+
+==> Gemini CLI...
+  gemini-3-flash-preview [##################--]   91.9% left  resets 2026-03-12 17:51
+
+==> GitHub Copilot CLI...
+  premium interactions [############--------]   60.6% left  resets 2026-03-12 16:29
+```
+
 ## Prerequisites
 
 - **Windows:** [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
