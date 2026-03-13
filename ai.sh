@@ -609,14 +609,17 @@ PY
 
 usage_copilot() {
     echo -e "${CYAN}==> GitHub Copilot CLI...${NC}"
-    local output
+    local output payload
 
-    if ! output=$(python3 <<'PY' 2>/dev/null
+    if ! payload=$(gh api /copilot_internal/user 2>/dev/null); then
+        echo -e "${YELLOW}  Usage unavailable${NC}"
+        return
+    fi
+
+    if ! output=$(python3 - "$payload" <<'PY' 2>/dev/null
 import json
 import sys
-import urllib.request
 from datetime import datetime
-from pathlib import Path
 
 
 def fmt_reset(value):
@@ -629,27 +632,7 @@ def fmt_reset(value):
         return value
 
 
-path = Path.home() / ".copilot" / "config.json"
-if not path.exists():
-    sys.exit(1)
-
-config = json.loads(path.read_text())
-token = next(iter((config.get("copilot_tokens") or {}).values()), None)
-if not token:
-    sys.exit(1)
-
-request = urllib.request.Request(
-    "https://api.github.com/copilot_internal/user",
-    headers={
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "Content-Type": "application/json",
-        "User-Agent": "ai-cli",
-    },
-)
-
-with urllib.request.urlopen(request, timeout=30) as response:
-    payload = json.loads(response.read().decode("utf-8"))
+payload = json.loads(sys.argv[1])
 
 rows = []
 for key, value in sorted((payload.get("quota_snapshots") or {}).items()):
