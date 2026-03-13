@@ -4,6 +4,7 @@ set -euo pipefail
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
+RED='\033[0;31m'
 NC='\033[0m'
 
 VERBOSE=false
@@ -19,38 +20,134 @@ for arg in "$@"; do
 done
 set -- "${args[@]+"${args[@]}"}"
 
+path_has_dir() {
+    local dir="$1"
+    case ":$PATH:" in
+        *":$dir:"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+prepend_path_dir() {
+    local dir="$1"
+    [[ -d "$dir" ]] || return 0
+    path_has_dir "$dir" || PATH="$dir:$PATH"
+}
+
+npm_user_prefix() {
+    printf '%s\n' "${AI_CLI_NPM_PREFIX:-$HOME/.local}"
+}
+
+npm_user_bin() {
+    printf '%s/bin\n' "$(npm_user_prefix)"
+}
+
+prepend_path_dir "$(npm_user_bin)"
+
+read_npm_package_version() {
+    local package="$1"
+    local prefix="${2:-}"
+    local -a cmd=(npm list -g "$package" --depth=0 --json)
+    if [[ -n "$prefix" ]]; then
+        cmd+=(--prefix "$prefix")
+    fi
+    "${cmd[@]}" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('dependencies',{}).get('$package',{}).get('version',''))" 2>/dev/null || true
+}
+
+read_command_version() {
+    local binary="$1"
+    local output version
+
+    if ! command -v "$binary" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    output=$("$binary" --version 2>/dev/null || "$binary" -v 2>/dev/null || true)
+    version=$(printf '%s\n' "$output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    [[ -n "$version" ]] || return 1
+    printf '%s\n' "$version"
+}
+
+npm_global_install_is_writable() {
+    local prefix global_root
+
+    prefix=$(npm config get prefix 2>/dev/null || true)
+    [[ -n "$prefix" ]] || return 1
+
+    global_root="$prefix/lib/node_modules"
+    if [[ -d "$global_root" ]]; then
+        [[ -w "$global_root" ]]
+    else
+        [[ -d "$prefix" && -w "$prefix" ]]
+    fi
+}
+
+install_npm_package() {
+    local display_name="$1"
+    local package="$2"
+    local prefix=""
+    local bin_dir
+    local bin_was_on_path=false
+    local -a cmd=(npm install -g "${package}@latest")
+
+    if ! npm_global_install_is_writable; then
+        prefix=$(npm_user_prefix)
+        bin_dir="$(npm_user_bin)"
+        if path_has_dir "$bin_dir"; then
+            bin_was_on_path=true
+        fi
+        mkdir -p "$prefix"
+        cmd+=(--prefix "$prefix")
+    fi
+
+    if ! $VERBOSE; then
+        cmd+=(--loglevel error)
+    fi
+
+    "${cmd[@]}"
+
+    if [[ -n "$prefix" ]]; then
+        prepend_path_dir "$bin_dir"
+        if ! $bin_was_on_path; then
+            echo -e "${YELLOW}  ${display_name} was installed to ${bin_dir}; add it to PATH to use it directly.${NC}"
+        fi
+    fi
+}
+
 check_npm_package() {
     local display_name="$1"
     local package="$2"
+    local binary="$3"
 
     echo -e "${CYAN}==> Checking ${display_name}...${NC}"
     local current latest
-    current=$(npm list -g "$package" --depth=0 --json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('dependencies',{}).get('$package',{}).get('version',''))" 2>/dev/null || true)
+    current=$(read_npm_package_version "$package")
+    if [[ -z "$current" ]]; then
+        current=$(read_npm_package_version "$package" "$(npm_user_prefix)")
+    fi
+    if [[ -z "$current" ]]; then
+        current=$(read_command_version "$binary" || true)
+    fi
     latest=$(npm view "$package" version 2>/dev/null || true)
 
     if [[ -z "$current" ]]; then
-        echo -e "${YELLOW}  Not installed, installing ${latest}...${NC}"
-        if $VERBOSE; then
-            npm install -g "${package}@latest"
-        else
-            npm install -g "${package}@latest" --loglevel error
-        fi
+        echo -e "${YELLOW}  Not installed, installing ${latest:-latest}...${NC}"
+        install_npm_package "$display_name" "$package"
     elif [[ "$current" == "$latest" ]]; then
         echo -e "${GREEN}  Already up to date (${current})${NC}"
     else
-        echo -e "${YELLOW}  Updating ${current} -> ${latest}...${NC}"
-        if $VERBOSE; then
-            npm install -g "${package}@latest"
-        else
-            npm install -g "${package}@latest" --loglevel error
-        fi
+        echo -e "${YELLOW}  Updating ${current} -> ${latest:-latest}...${NC}"
+        install_npm_package "$display_name" "$package"
     fi
 }
 
 check_claude() {
     echo -e "${CYAN}==> Checking Claude Code...${NC}"
     if ! command -v claude >/dev/null 2>&1; then
-        echo -e "${YELLOW}  Not installed${NC}"
+        local latest
+        latest=$(npm view "@anthropic-ai/claude-code" version 2>/dev/null || true)
+        echo -e "${YELLOW}  Not installed, installing ${latest:-latest}...${NC}"
+        install_npm_package "Claude Code" "@anthropic-ai/claude-code"
         return
     fi
 
@@ -529,9 +626,9 @@ do_update() {
     echo ""
     check_gh_copilot
     echo ""
-    check_npm_package "Gemini CLI" "@google/gemini-cli"
+    check_npm_package "Gemini CLI" "@google/gemini-cli" "gemini"
     echo ""
-    check_npm_package "Codex CLI" "@openai/codex"
+    check_npm_package "Codex CLI" "@openai/codex" "codex"
     echo ""
     echo -e "${GREEN}All AI tools checked.${NC}"
 }

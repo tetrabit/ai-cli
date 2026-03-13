@@ -48,16 +48,15 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks each tool for updates before installing — npm packages are skipped if already at the latest version.
+Checks each tool for updates before installing. If Claude Code, Gemini CLI, or Codex CLI are missing, `ai update` installs them with npm.
 
 | Tool | Windows | Linux | macOS |
 |------|---------|-------|-------|
-| Claude Code | `winget upgrade` | `claude update` | `claude update` |
+| Claude Code | `winget upgrade` | `npm install` when missing, otherwise `claude update` | `npm install` when missing, otherwise `claude update` |
 | GitHub CLI | `winget upgrade` | `apt` / `dnf` | `brew upgrade gh` |
 | GitHub Copilot CLI | `gh copilot update` | `gh copilot update` | `gh copilot update` |
 | Gemini CLI | npm version check | npm version check | npm version check |
 | Codex CLI | npm version check | npm version check | npm version check |
-| OpenCode | npm version check | npm version check | npm version check |
 
 Example output:
 
@@ -76,9 +75,6 @@ Example output:
 
 ==> Checking Codex CLI...
   Already up to date (0.113.0)
-
-==> Checking OpenCode...
-  Already up to date (1.2.24)
 
 All AI tools checked.
 ```
