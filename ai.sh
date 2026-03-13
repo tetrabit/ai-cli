@@ -398,7 +398,11 @@ def fmt_reset(value):
         return ""
     try:
         value = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M")
+        reset_at = datetime.fromisoformat(value).astimezone()
+        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
+        days = delta_seconds // 86400
+        hours = (delta_seconds % 86400) // 3600
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({days}d {hours}h)"
     except Exception:
         return value
 
@@ -466,7 +470,11 @@ def fmt_reset(value):
     if not value:
         return ""
     try:
-        return datetime.fromtimestamp(int(value)).astimezone().strftime("%Y-%m-%d %H:%M")
+        reset_at = datetime.fromtimestamp(int(value)).astimezone()
+        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
+        days = delta_seconds // 86400
+        hours = (delta_seconds % 86400) // 3600
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({days}d {hours}h)"
     except Exception:
         return str(value)
 
@@ -548,7 +556,11 @@ def fmt_reset(value):
         return ""
     try:
         value = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M")
+        reset_at = datetime.fromisoformat(value).astimezone()
+        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
+        days = delta_seconds // 86400
+        hours = (delta_seconds % 86400) // 3600
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({days}d {hours}h)"
     except Exception:
         return value
 
@@ -627,7 +639,11 @@ def fmt_reset(value):
         return ""
     try:
         value = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M")
+        reset_at = datetime.fromisoformat(value).astimezone()
+        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
+        days = delta_seconds // 86400
+        hours = (delta_seconds % 86400) // 3600
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({days}d {hours}h)"
     except Exception:
         return value
 
@@ -652,7 +668,7 @@ for key, value in sorted((payload.get("quota_snapshots") or {}).items()):
     if percent is None:
         continue
 
-    timestamp = value.get("timestamp_utc") or value.get("resetDate")
+    timestamp = value.get("resetDate") or payload.get("quota_reset_date_utc") or payload.get("quota_reset_date")
     rows.append((key.replace("_", " "), float(percent), fmt_reset(timestamp)))
 
 if not rows:
