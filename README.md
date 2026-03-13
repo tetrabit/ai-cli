@@ -48,7 +48,7 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks each tool for updates before installing. If Claude Code, Gemini CLI, or Codex CLI are missing, `ai update` installs them with npm.
+Checks each tool for updates before installing. If Claude Code, Gemini CLI, or Codex CLI are missing, `ai update` installs them with npm. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
 
 | Tool | Windows | Linux | macOS |
 |------|---------|-------|-------|

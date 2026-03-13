@@ -44,6 +44,84 @@ npm_user_bin() {
 
 prepend_path_dir "$(npm_user_bin)"
 
+ensure_managed_block_in_file() {
+    local file="$1"
+    local block="$2"
+    local dir
+
+    dir="$(dirname "$file")"
+    mkdir -p "$dir"
+    touch "$file"
+    python3 - "$file" "$block" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+block = sys.argv[2]
+start = "# >>> ai-cli PATH >>>"
+end = "# <<< ai-cli PATH <<<"
+managed = f"{start}\n{block}\n{end}\n"
+
+content = path.read_text() if path.exists() else ""
+normalized = content.rstrip("\n")
+
+if start in content and end in content:
+    prefix, remainder = content.split(start, 1)
+    _, suffix = remainder.split(end, 1)
+    replacement = prefix.rstrip("\n")
+    if replacement:
+        replacement += "\n\n"
+    replacement += managed
+    suffix = suffix.lstrip("\n")
+    if suffix:
+        replacement += "\n" + suffix
+    updated = replacement
+else:
+    updated = normalized
+    if updated:
+        updated += "\n\n"
+    updated += managed
+
+if not updated.endswith("\n"):
+    updated += "\n"
+
+changed = updated != content
+path.write_text(updated)
+sys.exit(0 if changed else 1)
+PY
+}
+
+persist_user_bin_path() {
+    local bin_dir shell_name block
+    local -a files=()
+    local updated=false
+
+    bin_dir="$(npm_user_bin)"
+    block="export PATH=\"$bin_dir:\$PATH\""
+    shell_name="$(basename "${SHELL:-}")"
+
+    case "$shell_name" in
+        bash)
+            files+=("$HOME/.bashrc" "$HOME/.profile")
+            ;;
+        zsh)
+            files+=("$HOME/.zshrc" "$HOME/.zprofile")
+            ;;
+        fish)
+            ensure_managed_block_in_file "$HOME/.config/fish/config.fish" "fish_add_path \"$bin_dir\"" && updated=true
+            ;;
+    esac
+
+    files+=("$HOME/.profile")
+
+    local file
+    for file in "${files[@]}"; do
+        ensure_managed_block_in_file "$file" "$block" && updated=true
+    done
+
+    $updated
+}
+
 read_npm_package_version() {
     local package="$1"
     local prefix="${2:-}"
@@ -88,7 +166,7 @@ install_npm_package() {
     local prefix=""
     local bin_dir
     local bin_was_on_path=false
-    local -a cmd=(npm install -g "${package}@latest")
+    local -a cmd=(npm install -g "${package}@latest" --no-fund)
 
     if ! npm_global_install_is_writable; then
         prefix=$(npm_user_prefix)
@@ -109,7 +187,8 @@ install_npm_package() {
     if [[ -n "$prefix" ]]; then
         prepend_path_dir "$bin_dir"
         if ! $bin_was_on_path; then
-            echo -e "${YELLOW}  ${display_name} was installed to ${bin_dir}; add it to PATH to use it directly.${NC}"
+            persist_user_bin_path >/dev/null || true
+            echo -e "${GREEN}  Added ${bin_dir} to your shell PATH for future sessions.${NC}"
         fi
     fi
 }
