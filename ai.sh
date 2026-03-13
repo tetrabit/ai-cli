@@ -377,6 +377,11 @@ print_usage_rows() {
 
     while IFS=$'\t' read -r label percent reset_at; do
         [[ -n "$label" ]] || continue
+        if [[ "$label" == "__TEXT__" ]]; then
+            echo -e "${YELLOW}  ${percent}${NC}"
+            continue
+        fi
+        [[ -n "$percent" ]] || continue
         print_usage_row "$label" "$percent" "$reset_at"
     done <<< "$output"
 }
@@ -388,6 +393,7 @@ usage_claude() {
     if ! output=$(python3 <<'PY' 2>/dev/null
 import json
 import sys
+import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -407,6 +413,57 @@ def fmt_reset(value):
         return value
 
 
+def cache_path():
+    return Path.home() / ".claude" / ".usage_cache.json"
+
+
+def load_cached_payload():
+    path = cache_path()
+    if not path.exists():
+        return None, None
+
+    try:
+        cached = json.loads(path.read_text())
+        payload = cached.get("payload")
+        cached_at = cached.get("cached_at")
+        if isinstance(payload, dict):
+            return payload, cached_at
+    except Exception:
+        pass
+
+    return None, None
+
+
+def save_cached_payload(payload):
+    try:
+        cache_path().write_text(
+            json.dumps({"cached_at": datetime.now().astimezone().isoformat(), "payload": payload})
+        )
+    except Exception:
+        pass
+
+
+def rows_from_payload(payload):
+    rows = []
+    for key, label in (
+        ("five_hour", "5h limit"),
+        ("seven_day", "7d limit"),
+        ("seven_day_sonnet", "7d sonnet"),
+        ("seven_day_opus", "7d opus"),
+    ):
+        item = payload.get(key) or {}
+        utilization = item.get("utilization")
+        if utilization is None:
+            continue
+        rows.append((label, max(0.0, 100.0 - float(utilization)), fmt_reset(item.get("resets_at"))))
+
+    extra = payload.get("extra_usage") or {}
+    if extra.get("is_enabled") and extra.get("utilization") is not None:
+        rows.append(("extra usage", max(0.0, 100.0 - float(extra["utilization"])), ""))
+
+    return rows
+
+
 path = Path.home() / ".claude" / ".credentials.json"
 if not path.exists():
     sys.exit(1)
@@ -420,31 +477,36 @@ request = urllib.request.Request(
     "https://api.anthropic.com/api/oauth/usage",
     headers={
         "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "anthropic-version": "2023-06-01",
         "anthropic-beta": "oauth-2025-04-20",
         "User-Agent": "claude-code",
     },
 )
 
-with urllib.request.urlopen(request, timeout=30) as response:
-    payload = json.loads(response.read().decode("utf-8"))
+cached_at = None
+try:
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    save_cached_payload(payload)
+except urllib.error.HTTPError as exc:
+    if exc.code != 429:
+        raise
+    payload, cached_at = load_cached_payload()
+    if payload is None:
+        print("__TEXT__\tUsage unavailable (rate limited by Claude)\t")
+        sys.exit(0)
 
-rows = []
-for key, label in (("five_hour", "5h limit"), ("seven_day", "7d limit")):
-    item = payload.get(key) or {}
-    utilization = item.get("utilization")
-    if utilization is None:
-        continue
-    rows.append((label, max(0.0, 100.0 - float(utilization)), fmt_reset(item.get("resets_at"))))
-
-extra = payload.get("extra_usage") or {}
-if extra.get("is_enabled") and extra.get("utilization") is not None:
-    rows.append(("extra usage", max(0.0, 100.0 - float(extra["utilization"])), ""))
+rows = rows_from_payload(payload)
 
 if not rows:
     sys.exit(1)
 
 for label, percent, reset_at in rows:
     print(f"{label}\t{percent:.1f}\t{reset_at}")
+
+if cached_at:
+    print(f"__TEXT__\tShowing cached usage from {fmt_reset(cached_at)}\t")
 PY
     ); then
         echo -e "${YELLOW}  Usage unavailable${NC}"
@@ -527,90 +589,109 @@ PY
 
 usage_gemini() {
     echo -e "${CYAN}==> Gemini CLI...${NC}"
-    local output
+    local output gemini_bin
 
-    if ! output=$(python3 <<'PY' 2>/dev/null
-import json
-import sys
-import urllib.request
-from datetime import datetime
-from pathlib import Path
+    gemini_bin=$(python3 <<'PY' 2>/dev/null
+import os
+import shutil
 
-
-def post(url, token, body):
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def fmt_reset(value):
-    if not value:
-        return ""
-    try:
-        value = value.replace("Z", "+00:00")
-        reset_at = datetime.fromisoformat(value).astimezone()
-        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
-        days = delta_seconds // 86400
-        hours = (delta_seconds % 86400) // 3600
-        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({days}d {hours}h)"
-    except Exception:
-        return value
-
-
-path = Path.home() / ".gemini" / "oauth_creds.json"
-if not path.exists():
-    sys.exit(1)
-
-creds = json.loads(path.read_text())
-token = creds.get("access_token")
-if not token:
-    sys.exit(1)
-
-load = post(
-    "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-    token,
-    {
-        "cloudaicompanionProject": None,
-        "metadata": {
-            "ideType": "IDE_UNSPECIFIED",
-            "platform": "PLATFORM_UNSPECIFIED",
-            "pluginType": "GEMINI",
-        },
-    },
-)
-project = load.get("cloudaicompanionProject")
-if not project:
-    sys.exit(1)
-
-quota = post(
-    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
-    token,
-    {"project": project},
-)
-
-rows = []
-for bucket in sorted(quota.get("buckets") or [], key=lambda item: item.get("modelId") or ""):
-    model_id = bucket.get("modelId")
-    fraction = bucket.get("remainingFraction")
-    if not model_id or fraction is None:
-        continue
-    percent = float(fraction) * 100.0 if float(fraction) <= 1.0 else float(fraction)
-    rows.append((model_id, percent, fmt_reset(bucket.get("resetTime"))))
-
-if not rows:
-    sys.exit(1)
-
-for label, percent, reset_at in rows:
-    print(f"{label}\t{percent:.1f}\t{reset_at}")
+path = shutil.which("gemini")
+if path:
+    print(os.path.realpath(path))
 PY
+    )
+
+    if [[ -z "$gemini_bin" || ! -f "$gemini_bin" ]]; then
+        echo -e "${YELLOW}  Usage unavailable${NC}"
+        return
+    fi
+
+    if ! output=$(GEMINI_BIN_REALPATH="$gemini_bin" node --input-type=module <<'NODE' 2>/dev/null
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+function fmtReset(value) {
+  if (!value) {
+    return '';
+  }
+
+  try {
+    const resetAt = new Date(value);
+    if (Number.isNaN(resetAt.getTime())) {
+      return value;
+    }
+
+    const deltaMs = Math.max(0, resetAt.getTime() - Date.now());
+    const days = Math.floor(deltaMs / 86400000);
+    const hours = Math.floor((deltaMs % 86400000) / 3600000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const stamp = `${resetAt.getFullYear()}-${pad(resetAt.getMonth() + 1)}-${pad(resetAt.getDate())} ${pad(resetAt.getHours())}:${pad(resetAt.getMinutes())}`;
+    return `${stamp} (${days}d ${hours}h)`;
+  } catch {
+    return value;
+  }
+}
+
+function moduleUrl(...parts) {
+  return pathToFileURL(path.join(...parts)).href;
+}
+
+const geminiBin = process.env.GEMINI_BIN_REALPATH;
+if (!geminiBin) {
+  process.exit(1);
+}
+
+const distDir = path.dirname(geminiBin);
+const packageRoot = path.dirname(distDir);
+const coreRoot = path.join(packageRoot, 'node_modules', '@google', 'gemini-cli-core', 'dist', 'src');
+
+const [{ getOauthClient }, { setupUser }, { CodeAssistServer }, { AuthType }] = await Promise.all([
+  import(moduleUrl(coreRoot, 'code_assist', 'oauth2.js')),
+  import(moduleUrl(coreRoot, 'code_assist', 'setup.js')),
+  import(moduleUrl(coreRoot, 'code_assist', 'server.js')),
+  import(moduleUrl(coreRoot, 'core', 'contentGenerator.js')),
+]);
+
+const config = {
+  getProxy() { return undefined; },
+  isBrowserLaunchSuppressed() { return false; },
+  getAcpMode() { return false; },
+  getValidationHandler() { return undefined; },
+};
+
+const client = await getOauthClient(AuthType.LOGIN_WITH_GOOGLE, config);
+const userData = await setupUser(client, config.getValidationHandler(), {});
+const server = new CodeAssistServer(
+  client,
+  userData.projectId,
+  {},
+  '',
+  userData.userTier,
+  userData.userTierName,
+  userData.paidTier,
+  undefined,
+);
+const quota = await server.retrieveUserQuota({ project: userData.projectId });
+
+const rows = [];
+for (const bucket of [...(quota.buckets || [])].sort((a, b) => (a.modelId || '').localeCompare(b.modelId || ''))) {
+  if (!bucket.modelId || bucket.remainingFraction == null) {
+    continue;
+  }
+
+  const fraction = Number(bucket.remainingFraction);
+  const percent = fraction <= 1 ? fraction * 100 : fraction;
+  rows.push([bucket.modelId, percent, fmtReset(bucket.resetTime)]);
+}
+
+if (!rows.length) {
+  process.exit(1);
+}
+
+for (const [label, percent, resetAt] of rows) {
+  console.log(`${label}\t${percent.toFixed(1)}\t${resetAt}`);
+}
+NODE
     ); then
         echo -e "${YELLOW}  Usage unavailable${NC}"
         return
