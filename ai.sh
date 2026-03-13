@@ -377,6 +377,10 @@ print_usage_rows() {
 
     while IFS=$'\t' read -r label percent reset_at; do
         [[ -n "$label" ]] || continue
+        if [[ "$label" == "__BLANK__" ]]; then
+            printf '\n'
+            continue
+        fi
         if [[ "$label" == "__TEXT__" ]]; then
             echo -e "${YELLOW}  ${percent}${NC}"
             continue
@@ -393,6 +397,7 @@ usage_claude() {
     if ! output=$(python3 <<'PY' 2>/dev/null
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -485,17 +490,23 @@ request = urllib.request.Request(
 )
 
 cached_at = None
-try:
-    with urllib.request.urlopen(request, timeout=30) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    save_cached_payload(payload)
-except urllib.error.HTTPError as exc:
-    if exc.code != 429:
-        raise
-    payload, cached_at = load_cached_payload()
-    if payload is None:
-        print("__TEXT__\tUsage unavailable (rate limited by Claude)\t")
-        sys.exit(0)
+payload = None
+for attempt in range(3):
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        save_cached_payload(payload)
+        break
+    except urllib.error.HTTPError as exc:
+        if exc.code != 429:
+            raise
+        if attempt < 2:
+            time.sleep(1.5 * (attempt + 1))
+            continue
+        payload, cached_at = load_cached_payload()
+        if payload is None:
+            print("__TEXT__\tUsage unavailable (Claude rate limited after retries)\t")
+            sys.exit(0)
 
 rows = rows_from_payload(payload)
 
@@ -673,15 +684,44 @@ const server = new CodeAssistServer(
 );
 const quota = await server.retrieveUserQuota({ project: userData.projectId });
 
-const rows = [];
-for (const bucket of [...(quota.buckets || [])].sort((a, b) => (a.modelId || '').localeCompare(b.modelId || ''))) {
+const buckets = [...(quota.buckets || [])].sort((a, b) => (a.modelId || '').localeCompare(b.modelId || ''));
+const flashRows = [];
+const proRows = [];
+const otherRows = [];
+
+for (const bucket of buckets) {
   if (!bucket.modelId || bucket.remainingFraction == null) {
     continue;
   }
 
   const fraction = Number(bucket.remainingFraction);
   const percent = fraction <= 1 ? fraction * 100 : fraction;
-  rows.push([bucket.modelId, percent, fmtReset(bucket.resetTime)]);
+  const row = [bucket.modelId, percent, fmtReset(bucket.resetTime)];
+
+  if (bucket.modelId.includes('flash')) {
+    flashRows.push(row);
+  } else if (bucket.modelId.includes('pro')) {
+    proRows.push(row);
+  } else {
+    otherRows.push(row);
+  }
+}
+
+const rows = [];
+if (flashRows.length) {
+  rows.push(...flashRows);
+}
+if (flashRows.length && proRows.length) {
+  rows.push(['__BLANK__', '', '']);
+}
+if (proRows.length) {
+  rows.push(...proRows);
+}
+if ((flashRows.length || proRows.length) && otherRows.length) {
+  rows.push(['__BLANK__', '', '']);
+}
+if (otherRows.length) {
+  rows.push(...otherRows);
 }
 
 if (!rows.length) {
@@ -689,6 +729,10 @@ if (!rows.length) {
 }
 
 for (const [label, percent, resetAt] of rows) {
+  if (label === '__BLANK__') {
+    console.log(`${label}\t\t`);
+    continue;
+  }
   console.log(`${label}\t${percent.toFixed(1)}\t${resetAt}`);
 }
 NODE
