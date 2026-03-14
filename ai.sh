@@ -385,6 +385,9 @@ print_usage_rows() {
             echo -e "${YELLOW}  ${percent}${NC}"
             continue
         fi
+        if [[ "$reset_at" == "__EMPTY__" ]]; then
+            reset_at=""
+        fi
         [[ -n "$percent" ]] || continue
         print_usage_row "$label" "$percent" "$reset_at"
     done <<< "$output"
@@ -514,10 +517,10 @@ if not rows:
     sys.exit(1)
 
 for label, percent, reset_at in rows:
-    print(f"{label}\t{percent:.1f}\t{reset_at}")
+    print(f"{label}\t{percent:.1f}\t{reset_at or '__EMPTY__'}")
 
 if cached_at:
-    print(f"__TEXT__\tShowing cached usage from {fmt_reset(cached_at)}\t")
+    print(f"__TEXT__\tShowing cached usage from {fmt_reset(cached_at)}\t__EMPTY__")
 PY
     ); then
         echo -e "${YELLOW}  Usage unavailable${NC}"
