@@ -297,6 +297,19 @@ check_gh_cli() {
         else
             echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
         fi
+    elif command -v pacman &>/dev/null; then
+        if $VERBOSE; then
+            sudo pacman -S --noconfirm github-cli 2>&1 || true
+        else
+            sudo pacman -S --noconfirm github-cli 2>&1 >/dev/null || true
+        fi
+        local new_ver
+        new_ver=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        if [[ "$current" == "$new_ver" ]]; then
+            echo -e "${GREEN}  Already up to date (${current})${NC}"
+        else
+            echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
+        fi
     elif command -v brew &>/dev/null; then
         if $VERBOSE; then
             brew upgrade gh 2>&1 || true
