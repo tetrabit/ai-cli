@@ -223,10 +223,12 @@ check_npm_package() {
 check_claude() {
     echo -e "${CYAN}==> Checking Claude Code...${NC}"
     if ! command -v claude >/dev/null 2>&1; then
-        local latest
-        latest=$(npm view "@anthropic-ai/claude-code" version 2>/dev/null || true)
-        echo -e "${YELLOW}  Not installed, installing ${latest:-latest}...${NC}"
-        install_npm_package "Claude Code" "@anthropic-ai/claude-code"
+        echo -e "${YELLOW}  Not installed, installing...${NC}"
+        if $VERBOSE; then
+            curl -fsSL https://claude.ai/install.sh | bash
+        else
+            curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null
+        fi
         return
     fi
 
@@ -856,10 +858,10 @@ tool="${1:-}"
 shift 2>/dev/null || true
 
 case "$tool" in
-    claude)  claude --dangerously-skip-permissions "$@" ;;
-    codex)   codex --yolo "$@" ;;
-    gemini)  gemini --yolo "$@" ;;
-    copilot) gh copilot --yolo "$@" ;;
+    claude)  exec claude --dangerously-skip-permissions "$@" ;;
+    codex)   exec codex --yolo "$@" ;;
+    gemini)  exec gemini --yolo "$@" ;;
+    copilot) exec gh copilot --yolo "$@" ;;
     update)  do_update ;;
     usage)   do_usage ;;
     *)
