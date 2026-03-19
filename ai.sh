@@ -422,6 +422,13 @@ from datetime import datetime
 from pathlib import Path
 
 
+REFRESH_URL = "https://platform.claude.com/v1/oauth/token"
+CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+SCOPES = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+CREDS_PATH = Path.home() / ".claude" / ".credentials.json"
+STATUS_URL = "https://status.claude.com/api/v2/components.json"
+
+
 def fmt_reset(value):
     if not value:
         return ""
@@ -466,6 +473,96 @@ def save_cached_payload(payload):
         pass
 
 
+def refresh_oauth_token(creds):
+    """Refresh the OAuth token and persist new credentials.
+    Returns (new_token, None) on success, (None, message) on actionable failure,
+    or (None, None) on transient/unknown failure.
+    """
+    oauth = creds.get("claudeAiOauth", {})
+    rt = oauth.get("refreshToken")
+    if not rt:
+        return None, "Session expired \u2014 run `claude auth login` to re-login"
+    body = json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": rt,
+        "client_id": CLIENT_ID,
+        "scope": SCOPES,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        REFRESH_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "claude-code",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 401, 403):
+            try:
+                err = json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                err = {}
+            if err.get("error") == "invalid_grant":
+                return None, "Session expired \u2014 run `claude auth login` to re-login"
+            return None, "Token refresh failed \u2014 run `claude auth login` to re-login"
+        return None, None  # transient error, let caller retry
+    except Exception:
+        return None, None  # network error, let caller retry
+    new_token = data.get("access_token")
+    if not new_token:
+        return None, None
+    oauth["accessToken"] = new_token
+    oauth["refreshToken"] = data.get("refresh_token", rt)
+    oauth["expiresAt"] = int(time.time() * 1000) + data.get("expires_in", 3600) * 1000
+    creds["claudeAiOauth"] = oauth
+    try:
+        CREDS_PATH.write_text(json.dumps(creds))
+    except Exception:
+        pass
+    return new_token, None
+
+def get_claude_status():
+    """Check status.claude.com for Claude Code component status."""
+    try:
+        req = urllib.request.Request(
+            STATUS_URL,
+            headers={"Accept": "application/json", "User-Agent": "ai-cli"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        issues = []
+        for comp in data.get("components", []):
+            name = comp.get("name", "")
+            if name in ("Claude Code", "Claude API (api.anthropic.com)"):
+                status = comp.get("status", "unknown")
+                if status != "operational":
+                    label = status.replace("_", " ").title()
+                    issues.append(f"{name}: {label}")
+        return "; ".join(issues) if issues else None
+    except Exception:
+        pass
+    return None
+
+
+def make_usage_request(token):
+    return urllib.request.Request(
+        "https://api.anthropic.com/api/oauth/usage",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": "claude-code",
+        },
+    )
+
+
 def rows_from_payload(payload):
     rows = []
     for key, label in (
@@ -479,69 +576,105 @@ def rows_from_payload(payload):
         if utilization is None:
             continue
         rows.append((label, max(0.0, 100.0 - float(utilization)), fmt_reset(item.get("resets_at"))))
-
     extra = payload.get("extra_usage") or {}
     if extra.get("is_enabled") and extra.get("utilization") is not None:
         rows.append(("extra usage", max(0.0, 100.0 - float(extra["utilization"])), ""))
-
     return rows
 
 
-path = Path.home() / ".claude" / ".credentials.json"
-if not path.exists():
+# -- main --
+if not CREDS_PATH.exists():
     sys.exit(1)
-
-data = json.loads(path.read_text())
-token = data.get("claudeAiOauth", {}).get("accessToken")
+creds = json.loads(CREDS_PATH.read_text())
+oauth = creds.get("claudeAiOauth", {})
+token = oauth.get("accessToken")
 if not token:
     sys.exit(1)
+# Proactively refresh if token expired or within 5 minutes of expiry
+expires_at = oauth.get("expiresAt", 0)
+token_refreshed = False
+refresh_msg = None
+if time.time() * 1000 + 5 * 60 * 1000 >= expires_at:
+    new_token, refresh_msg = refresh_oauth_token(creds)
+    if new_token:
+        token = new_token
+        token_refreshed = True
+        refresh_msg = None
 
-request = urllib.request.Request(
-    "https://api.anthropic.com/api/oauth/usage",
-    headers={
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "oauth-2025-04-20",
-        "User-Agent": "claude-code",
-    },
-)
-
+# If proactive refresh gave an actionable message (e.g. invalid_grant),
+# skip the API call entirely -- token is definitely dead.
 cached_at = None
 payload = None
-for attempt in range(3):
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        save_cached_payload(payload)
-        break
-    except urllib.error.HTTPError as exc:
-        if exc.code != 429:
-            raise
-        if attempt < 2:
-            time.sleep(1.5 * (attempt + 1))
-            continue
-        payload, cached_at = load_cached_payload()
-        if payload is None:
-            print("__TEXT__\tUsage unavailable (Claude rate limited after retries)\t")
-            sys.exit(0)
+if refresh_msg:
+    payload, cached_at = load_cached_payload()
+else:
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(make_usage_request(token), timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            save_cached_payload(payload)
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401 and not token_refreshed:
+                token_refreshed = True
+                new_token, msg = refresh_oauth_token(creds)
+                if new_token:
+                    token = new_token
+                    continue
+                # Refresh failed -- fall back to cache
+                refresh_msg = msg
+                payload, cached_at = load_cached_payload()
+                if payload is None and not refresh_msg:
+                    status_msg = get_claude_status()
+                    if status_msg:
+                        refresh_msg = f"\u26a0 {status_msg}"
+                    else:
+                        refresh_msg = "Usage unavailable"
+                break
+            if exc.code != 429:
+                raise
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            payload, cached_at = load_cached_payload()
+            if payload is None:
+                refresh_msg = "Usage unavailable (Claude rate limited after retries)"
+        except Exception:
+            payload, cached_at = load_cached_payload()
+            if payload is None:
+                status_msg = get_claude_status()
+                if status_msg:
+                    refresh_msg = f"\u26a0 {status_msg}"
+                else:
+                    refresh_msg = "Usage unavailable"
+            break
 
+# Output results
+if payload is None and refresh_msg:
+    # No cached data either -- just print the message and exit successfully
+    print(f"__TEXT__\t{refresh_msg}\t")
+    sys.exit(0)
+elif payload is None:
+    sys.exit(1)
 rows = rows_from_payload(payload)
-
 if not rows:
     sys.exit(1)
-
+# Print the actionable message first (e.g. "Session expired -- run claude auth login")
+if refresh_msg:
+    print(f"__TEXT__\t{refresh_msg}\t")
 for label, percent, reset_at in rows:
     print(f"{label}\t{percent:.1f}\t{reset_at or '__EMPTY__'}")
-
 if cached_at:
     print(f"__TEXT__\tShowing cached usage from {fmt_reset(cached_at)}\t__EMPTY__")
+# Always surface status page degradation if present
+status_msg = get_claude_status()
+if status_msg:
+    print(f"__TEXT__\t\u26a0 {status_msg}\t")
 PY
     ); then
         echo -e "${YELLOW}  Usage unavailable${NC}"
         return
     fi
-
     print_usage_rows "$output" "Usage unavailable"
 }
 
