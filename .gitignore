@@ -1,0 +1,31 @@
+# Credential and token files
+.env
+.env.*
+*.env
+
+# Common credential file names
+credentials.json
+auth.json
+secrets.json
+token.json
+tokens.json
+*.token
+*.secret
+*.secrets
+
+# Key files
+*.key
+*.pem
+*.p12
+*.pfx
+*.asc
+
+# Claude credentials
+.credentials.json
+.usage_cache.json
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
