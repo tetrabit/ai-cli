@@ -222,42 +222,32 @@ check_npm_package() {
 
 check_claude() {
     echo -e "${CYAN}==> Checking Claude Code...${NC}"
-    if ! command -v claude >/dev/null 2>&1; then
+    local old_ver=""
+    if command -v claude >/dev/null 2>&1; then
+        old_ver=$(claude --version 2>/dev/null || true)
+    else
         echo -e "${YELLOW}  Not installed, installing...${NC}"
-        if $VERBOSE; then
-            curl -fsSL https://claude.ai/install.sh | bash
-        else
-            curl -fsSL https://claude.ai/install.sh | bash 2>/dev/null
-        fi
-        return
     fi
 
     if $VERBOSE; then
-        claude update 2>&1 | tee /tmp/ai-claude-update.log || true
-        local output
-        output=$(cat /tmp/ai-claude-update.log)
+        curl -fsSL https://claude.ai/install.sh | bash
     else
-        local output
-        output=$(claude update 2>&1 || true)
+        curl -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1
     fi
-    if echo "$output" | grep -qi "already.*latest\|up to date\|no update"; then
-        local ver
-        ver=$(claude --version 2>/dev/null || true)
-        if [[ -n "$ver" ]]; then
-            echo -e "${GREEN}  Already up to date (${ver})${NC}"
-        else
-            echo -e "${GREEN}  Already up to date${NC}"
-        fi
-    elif echo "$output" | grep -qi "command not found\|not recognized\|no such file"; then
-        echo -e "${YELLOW}  Not installed${NC}"
+
+    if ! command -v claude >/dev/null 2>&1; then
+        echo -e "${YELLOW}  Installation failed${NC}"
+        return
+    fi
+
+    local new_ver
+    new_ver=$(claude --version 2>/dev/null || true)
+    if [[ -z "$old_ver" ]]; then
+        echo -e "${GREEN}  Installed (${new_ver})${NC}"
+    elif [[ "$old_ver" == "$new_ver" ]]; then
+        echo -e "${GREEN}  Already up to date (${new_ver})${NC}"
     else
-        local ver
-        ver=$(claude --version 2>/dev/null || true)
-        if [[ -n "$ver" ]]; then
-            echo -e "${YELLOW}  Updated to ${ver}${NC}"
-        else
-            echo -e "${YELLOW}  Updated successfully${NC}"
-        fi
+        echo -e "${YELLOW}  Updated ${old_ver} -> ${new_ver}${NC}"
     fi
 }
 
