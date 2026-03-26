@@ -675,9 +675,17 @@ usage_codex() {
     if ! output=$(python3 <<'PY' 2>/dev/null
 import json
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+TOKEN_URL = "https://auth.openai.com/oauth/token"
+USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+AUTH_PATH = Path.home() / ".codex" / "auth.json"
 
 
 def fmt_reset(value):
@@ -693,29 +701,109 @@ def fmt_reset(value):
         return str(value)
 
 
-path = Path.home() / ".codex" / "auth.json"
-if not path.exists():
+def refresh_codex_token(data):
+    """Refresh the access token and persist new credentials.
+    Returns (new_token, None) on success, (None, message) on actionable failure,
+    or (None, None) on transient/unknown failure.
+    """
+    tokens = data.get("tokens") or {}
+    rt = tokens.get("refresh_token")
+    if not rt:
+        return None, "Session expired \u2014 run `codex login` to re-login"
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": rt,
+        "client_id": CLIENT_ID,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        TOKEN_URL,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (400, 401, 403):
+            try:
+                err = json.loads(exc.read().decode("utf-8"))
+            except Exception:
+                err = {}
+            err_obj = err.get("error") or err
+            code = err_obj.get("code") if isinstance(err_obj, dict) else None
+            if code == "invalid_grant":
+                return None, "Session expired \u2014 run `codex login` to re-login"
+            return None, "Token refresh failed \u2014 run `codex login` to re-login"
+        return None, None
+    except Exception:
+        return None, None
+    new_token = result.get("access_token")
+    if not new_token:
+        return None, None
+    tokens["access_token"] = new_token
+    if result.get("refresh_token"):
+        tokens["refresh_token"] = result["refresh_token"]
+    data["tokens"] = tokens
+    data["last_refresh"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        AUTH_PATH.write_text(json.dumps(data))
+    except Exception:
+        pass
+    return new_token, None
+
+
+def make_usage_request(token, account_id):
+    return urllib.request.Request(
+        USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "chatgpt-account-id": account_id,
+            "User-Agent": "codex-cli",
+        },
+    )
+
+
+if not AUTH_PATH.exists():
     sys.exit(1)
 
-data = json.loads(path.read_text())
+data = json.loads(AUTH_PATH.read_text())
 tokens = data.get("tokens") or {}
 token = tokens.get("access_token")
 account_id = tokens.get("account_id")
 if not token or not account_id:
     sys.exit(1)
 
-request = urllib.request.Request(
-    "https://chatgpt.com/backend-api/wham/usage",
-    headers={
-        "Authorization": f"Bearer {token}",
-        "chatgpt-account-id": account_id,
-        "User-Agent": "codex-cli",
-    },
-)
+refresh_msg = None
+payload = None
+token_refreshed = False
 
-with urllib.request.urlopen(request, timeout=30) as response:
-    payload = json.loads(response.read().decode("utf-8"))
+try:
+    with urllib.request.urlopen(make_usage_request(token, account_id), timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+except urllib.error.HTTPError as exc:
+    if exc.code == 401 and not token_refreshed:
+        token_refreshed = True
+        new_token, msg = refresh_codex_token(data)
+        if new_token:
+            token = new_token
+            try:
+                with urllib.request.urlopen(make_usage_request(token, account_id), timeout=30) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            except Exception:
+                refresh_msg = "Usage unavailable"
+        else:
+            refresh_msg = msg
+    else:
+        refresh_msg = "Usage unavailable"
+except Exception:
+    refresh_msg = "Usage unavailable"
 
+if payload is None and refresh_msg:
+    print(f"__TEXT__\t{refresh_msg}\t")
+    sys.exit(0)
+elif payload is None:
+    sys.exit(1)
 rows = []
 rate_limit = payload.get("rate_limit") or {}
 for key, label in (("primary_window", "5h limit"), ("secondary_window", "7d limit")):
