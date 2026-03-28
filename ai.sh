@@ -1065,11 +1065,22 @@ do_update() {
     echo -e "${GREEN}All AI tools checked.${NC}"
 }
 
+run_claude() {
+    local uid
+    uid="${EUID:-$(id -u)}"
+
+    if [[ "$uid" -eq 0 ]]; then
+        exec env IS_SANDBOX=1 CLAUDE_CODE_BUBBLEWRAP=1 claude --dangerously-skip-permissions "$@"
+    fi
+
+    exec claude --dangerously-skip-permissions "$@"
+}
+
 tool="${1:-}"
 shift 2>/dev/null || true
 
 case "$tool" in
-    claude)  exec claude --dangerously-skip-permissions "$@" ;;
+    claude)  run_claude "$@" ;;
     codex)   exec codex --yolo "$@" ;;
     gemini)  exec gemini --yolo "$@" ;;
     copilot) exec gh copilot --yolo "$@" ;;
