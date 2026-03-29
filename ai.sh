@@ -900,7 +900,19 @@ const config = {
 };
 
 const client = await getOauthClient(AuthType.LOGIN_WITH_GOOGLE, config);
-const userData = await setupUser(client, config.getValidationHandler(), {});
+
+async function loadUserData() {
+  try {
+    return await setupUser(client, config, {});
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes('getValidationHandler')) {
+      return await setupUser(client, config.getValidationHandler(), {});
+    }
+    throw error;
+  }
+}
+
+const userData = await loadUserData();
 const server = new CodeAssistServer(
   client,
   userData.projectId,
