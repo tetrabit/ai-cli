@@ -848,6 +848,7 @@ PY
 
     if ! output=$(GEMINI_BIN_REALPATH="$gemini_bin" node --input-type=module <<'NODE' 2>/dev/null
 import path from 'node:path';
+import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 function fmtReset(value) {
@@ -872,25 +873,41 @@ function fmtReset(value) {
   }
 }
 
-function moduleUrl(...parts) {
-  return pathToFileURL(path.join(...parts)).href;
-}
-
 const geminiBin = process.env.GEMINI_BIN_REALPATH;
 if (!geminiBin) {
   process.exit(1);
 }
 
-const distDir = path.dirname(geminiBin);
-const packageRoot = path.dirname(distDir);
-const coreRoot = path.join(packageRoot, 'node_modules', '@google', 'gemini-cli-core', 'dist', 'src');
+const bundleDir = path.dirname(geminiBin);
 
-const [{ getOauthClient }, { setupUser }, { CodeAssistServer }, { AuthType }] = await Promise.all([
-  import(moduleUrl(coreRoot, 'code_assist', 'oauth2.js')),
-  import(moduleUrl(coreRoot, 'code_assist', 'setup.js')),
-  import(moduleUrl(coreRoot, 'code_assist', 'server.js')),
-  import(moduleUrl(coreRoot, 'core', 'contentGenerator.js')),
-]);
+// Gemini CLI v0.3x+ bundles all modules into core-<hash>.js files.
+// Older versions use separate source files under @google/gemini-cli-core.
+const coreRoot = path.join(path.dirname(bundleDir), 'node_modules', '@google', 'gemini-cli-core', 'dist', 'src');
+const legacyModuleUrl = (...parts) => pathToFileURL(path.join(...parts)).href;
+let getOauthClient, setupUser, CodeAssistServer, AuthType;
+
+const coreFiles = fs.readdirSync(bundleDir).filter(f => /^core-[A-Z0-9]+\.js$/.test(f));
+let loaded = false;
+for (const cf of coreFiles) {
+  try {
+    const m = await import(pathToFileURL(path.join(bundleDir, cf)).href);
+    if (m.getOauthClient && m.setupUser && m.CodeAssistServer && m.AuthType) {
+      ({ getOauthClient, setupUser, CodeAssistServer, AuthType } = m);
+      loaded = true;
+      break;
+    }
+  } catch {}
+}
+
+if (!loaded) {
+  // Fall back to legacy unbundled layout
+  [{ getOauthClient }, { setupUser }, { CodeAssistServer }, { AuthType }] = await Promise.all([
+    import(legacyModuleUrl(coreRoot, 'code_assist', 'oauth2.js')),
+    import(legacyModuleUrl(coreRoot, 'code_assist', 'setup.js')),
+    import(legacyModuleUrl(coreRoot, 'code_assist', 'server.js')),
+    import(legacyModuleUrl(coreRoot, 'core', 'contentGenerator.js')),
+  ]);
+}
 
 const config = {
   getProxy() { return undefined; },
