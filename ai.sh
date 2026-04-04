@@ -408,7 +408,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 
@@ -428,7 +429,14 @@ def fmt_reset(value):
         delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
         days = delta_seconds // 86400
         hours = (delta_seconds % 86400) // 3600
-        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({days}d {hours}h)"
+        minutes = (delta_seconds % 3600) // 60
+        if days:
+            delta_text = f"{days}d {hours}h"
+        elif hours:
+            delta_text = f"{hours}h {minutes}m"
+        else:
+            delta_text = f"{minutes}m"
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({delta_text})"
     except Exception:
         return value
 
@@ -437,28 +445,103 @@ def cache_path():
     return Path.home() / ".claude" / ".usage_cache.json"
 
 
+def parse_iso_timestamp(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+    except Exception:
+        return None
+
+
+def fmt_cached_at(value):
+    timestamp = parse_iso_timestamp(value)
+    if not timestamp:
+        return value or "unknown time"
+
+    age_seconds = max(0, int((datetime.now(timestamp.tzinfo) - timestamp).total_seconds()))
+    days = age_seconds // 86400
+    hours = (age_seconds % 86400) // 3600
+    minutes = (age_seconds % 3600) // 60
+
+    if days:
+        age = f"{days}d {hours}h ago"
+    elif hours:
+        age = f"{hours}h {minutes}m ago"
+    else:
+        age = f"{minutes}m ago"
+
+    return f"{timestamp.strftime('%Y-%m-%d %H:%M')} ({age})"
+
+
+def retry_after_to_iso(value):
+    if not value:
+        return None
+
+    try:
+        seconds = max(0, int(value))
+        return (datetime.now().astimezone() + timedelta(seconds=seconds)).isoformat()
+    except Exception:
+        pass
+
+    try:
+        return parsedate_to_datetime(value).astimezone().isoformat()
+    except Exception:
+        return None
+
+
+def is_rate_limit_active(value):
+    deadline = parse_iso_timestamp(value)
+    if not deadline:
+        return False
+    return deadline > datetime.now(deadline.tzinfo)
+
+
 def load_cached_payload():
     path = cache_path()
     if not path.exists():
-        return None, None
+        return None, None, None
 
     try:
         cached = json.loads(path.read_text())
         payload = cached.get("payload")
         cached_at = cached.get("cached_at")
+        rate_limited_until = cached.get("rate_limited_until")
         if isinstance(payload, dict):
-            return payload, cached_at
+            return payload, cached_at, rate_limited_until
+        return None, cached_at, rate_limited_until
     except Exception:
         pass
 
-    return None, None
+    return None, None, None
 
 
 def save_cached_payload(payload):
     try:
-        cache_path().write_text(
+        path = cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
             json.dumps({"cached_at": datetime.now().astimezone().isoformat(), "payload": payload})
         )
+    except Exception:
+        pass
+
+
+def save_rate_limit_until(rate_limited_until):
+    try:
+        path = cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cached = {}
+        if path.exists():
+            try:
+                cached = json.loads(path.read_text())
+            except Exception:
+                cached = {}
+        if rate_limited_until:
+            cached["rate_limited_until"] = rate_limited_until
+        else:
+            cached.pop("rate_limited_until", None)
+        path.write_text(json.dumps(cached))
     except Exception:
         pass
 
@@ -591,53 +674,58 @@ if time.time() * 1000 + 5 * 60 * 1000 >= expires_at:
         token_refreshed = True
         refresh_msg = None
 
-# If proactive refresh gave an actionable message (e.g. invalid_grant),
-# skip the API call entirely -- token is definitely dead.
-cached_at = None
+cached_payload, cached_at, rate_limited_until = load_cached_payload()
 payload = None
 if refresh_msg:
-    payload, cached_at = load_cached_payload()
+    payload = cached_payload
 else:
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(make_usage_request(token), timeout=30) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            save_cached_payload(payload)
-            break
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401 and not token_refreshed:
-                token_refreshed = True
-                new_token, msg = refresh_oauth_token(creds)
-                if new_token:
-                    token = new_token
-                    continue
-                # Refresh failed -- fall back to cache
-                refresh_msg = msg
-                payload, cached_at = load_cached_payload()
-                if payload is None and not refresh_msg:
+    if cached_payload is not None and is_rate_limit_active(rate_limited_until):
+        payload = cached_payload
+    else:
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(make_usage_request(token), timeout=30) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                save_cached_payload(payload)
+                rate_limited_until = None
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401 and not token_refreshed:
+                    token_refreshed = True
+                    new_token, msg = refresh_oauth_token(creds)
+                    if new_token:
+                        token = new_token
+                        continue
+                    # Refresh failed -- fall back to cache
+                    refresh_msg = msg
+                    payload, cached_at, rate_limited_until = load_cached_payload()
+                    if payload is None and not refresh_msg:
+                        status_msg = get_claude_status()
+                        if status_msg:
+                            refresh_msg = f"⚠ {status_msg}"
+                        else:
+                            refresh_msg = "Usage unavailable"
+                    break
+                if exc.code != 429:
+                    raise
+                rate_limited_until = retry_after_to_iso(exc.headers.get("Retry-After"))
+                save_rate_limit_until(rate_limited_until)
+                payload, cached_at, rate_limited_until = load_cached_payload()
+                if payload is None:
+                    if rate_limited_until:
+                        refresh_msg = f"Usage unavailable (Claude rate limited until {fmt_reset(rate_limited_until)})"
+                    else:
+                        refresh_msg = "Usage unavailable (Claude rate limited)"
+                break
+            except Exception:
+                payload, cached_at, rate_limited_until = load_cached_payload()
+                if payload is None:
                     status_msg = get_claude_status()
                     if status_msg:
-                        refresh_msg = f"\u26a0 {status_msg}"
+                        refresh_msg = f"⚠ {status_msg}"
                     else:
                         refresh_msg = "Usage unavailable"
                 break
-            if exc.code != 429:
-                raise
-            if attempt < 2:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            payload, cached_at = load_cached_payload()
-            if payload is None:
-                refresh_msg = "Usage unavailable (Claude rate limited after retries)"
-        except Exception:
-            payload, cached_at = load_cached_payload()
-            if payload is None:
-                status_msg = get_claude_status()
-                if status_msg:
-                    refresh_msg = f"\u26a0 {status_msg}"
-                else:
-                    refresh_msg = "Usage unavailable"
-            break
 
 # Output results
 if payload is None and refresh_msg:
@@ -651,11 +739,14 @@ if not rows:
     sys.exit(1)
 # Print the actionable message first (e.g. "Session expired -- run claude auth login")
 if refresh_msg:
-    print(f"__TEXT__\t{refresh_msg}\t")
+    print(f"__TEXT__	{refresh_msg}	")
 for label, percent, reset_at in rows:
-    print(f"{label}\t{percent:.1f}\t{reset_at or '__EMPTY__'}")
+    print(f"{label}	{percent:.1f}	{reset_at or '__EMPTY__'}")
 if cached_at:
-    print(f"__TEXT__\tShowing cached usage from {fmt_reset(cached_at)}\t__EMPTY__")
+    cache_note = f"Showing cached usage from {fmt_cached_at(cached_at)}"
+    if is_rate_limit_active(rate_limited_until):
+        cache_note += f"; Claude API rate limited until {fmt_reset(rate_limited_until)}"
+    print(f"__TEXT__	{cache_note}	__EMPTY__")
 # Always surface status page degradation if present
 status_msg = get_claude_status()
 if status_msg:
@@ -1026,7 +1117,14 @@ def fmt_reset(value):
         delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
         days = delta_seconds // 86400
         hours = (delta_seconds % 86400) // 3600
-        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({days}d {hours}h)"
+        minutes = (delta_seconds % 3600) // 60
+        if days:
+            delta_text = f"{days}d {hours}h"
+        elif hours:
+            delta_text = f"{hours}h {minutes}m"
+        else:
+            delta_text = f"{minutes}m"
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({delta_text})"
     except Exception:
         return value
 
