@@ -62,11 +62,37 @@ function Update-NpmPackage($DisplayName, $Package) {
     }
 }
 
+function Update-Hermes {
+    Write-Host "==> Checking Hermes Agent..." -ForegroundColor Cyan
+    if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {
+        Write-Host "  Not installed" -ForegroundColor Yellow
+        return
+    }
+
+    $verOutput = hermes --version 2>$null | Select-Object -First 1
+    $current = if ($verOutput -match 'v(\d+\.\d+\.\d+)') { $Matches[1] } else { $null }
+
+    hermes update >$null 2>&1
+
+    $verOutput = hermes --version 2>$null | Select-Object -First 1
+    $newVer = if ($verOutput -match 'v(\d+\.\d+\.\d+)') { $Matches[1] } else { $null }
+
+    if ($current -and $current -eq $newVer) {
+        Write-Host "  Already up to date ($current)" -ForegroundColor Green
+    } elseif ($newVer) {
+        $displayCurrent = if ($current) { $current } else { "unknown" }
+        Write-Host "  Updated $displayCurrent -> $newVer" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Update check complete" -ForegroundColor Green
+    }
+}
+
 switch ($Tool) {
     "claude"  { claude --dangerously-skip-permissions @ExtraArgs }
     "codex"   { codex --yolo @ExtraArgs }
     "gemini"  { gemini --yolo @ExtraArgs }
     "copilot" { gh copilot --yolo @ExtraArgs }
+    "hermes"  { hermes --yolo @ExtraArgs }
     "update"  {
         Update-WingetPackage "Claude Code" "Anthropic.ClaudeCode"
         Write-Host ""
@@ -80,6 +106,8 @@ switch ($Tool) {
         Write-Host ""
         Update-NpmPackage "OpenCode" "opencode-ai"
         Write-Host ""
+        Update-Hermes
+        Write-Host ""
         Write-Host "All AI tools checked." -ForegroundColor Green
     }
     default {
@@ -88,6 +116,7 @@ switch ($Tool) {
         Write-Host "  ai codex    -> codex --yolo"
         Write-Host "  ai gemini   -> gemini --yolo"
         Write-Host "  ai copilot  -> gh copilot --yolo"
+        Write-Host "  ai hermes   -> hermes --yolo"
         Write-Host "  ai update   -> update all AI tools"
     }
 }

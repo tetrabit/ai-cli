@@ -38,6 +38,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tetrabit/ai-cli/main/a
 | OpenAI Codex | `ai codex` | `codex --yolo` |
 | Google Gemini | `ai gemini` | `gemini --yolo` |
 | GitHub Copilot | `ai copilot` | `gh copilot --yolo` |
+| Hermes Agent | `ai hermes` | `hermes --yolo` |
 
 All extra arguments are forwarded to the underlying tool.
 
@@ -57,6 +58,7 @@ Checks each tool for updates before installing. If Claude Code, Gemini CLI, or C
 | GitHub Copilot CLI | `gh copilot update` | `gh copilot update` | `gh copilot update` |
 | Gemini CLI | npm version check | npm version check | npm version check |
 | Codex CLI | npm version check | npm version check | npm version check |
+| Hermes Agent | `hermes update` | `hermes update` | `hermes update` |
 
 Example output:
 

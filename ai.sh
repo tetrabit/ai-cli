@@ -290,10 +290,13 @@ check_gh_cli() {
             echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
         fi
     elif command -v pacman &>/dev/null; then
-        if $VERBOSE; then
-            sudo pacman -S --noconfirm github-cli 2>&1 || true
-        else
-            sudo pacman -S --noconfirm github-cli 2>&1 >/dev/null || true
+        # Check if an update is actually available
+        if pacman -Qu github-cli >/dev/null 2>&1; then
+            if $VERBOSE; then
+                sudo pacman -S --noconfirm github-cli 2>&1 || true
+            else
+                sudo pacman -S --noconfirm github-cli 2>&1 >/dev/null || true
+            fi
         fi
         local new_ver
         new_ver=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
@@ -338,6 +341,34 @@ check_gh_copilot() {
         echo -e "${YELLOW}  Updated successfully${NC}"
     else
         echo -e "${GREEN}  Already up to date${NC}"
+    fi
+}
+
+check_hermes() {
+    echo -e "${CYAN}==> Checking Hermes Agent...${NC}"
+    if ! command -v hermes >/dev/null 2>&1; then
+        echo -e "${YELLOW}  Not installed${NC}"
+        return
+    fi
+
+    local current
+    current=$(hermes --version 2>/dev/null | head -n 1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
+
+    if $VERBOSE; then
+        hermes update
+    else
+        hermes update >/dev/null 2>&1
+    fi
+
+    local new_ver
+    new_ver=$(hermes --version 2>/dev/null | head -n 1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
+
+    if [[ -n "$current" && "$current" == "$new_ver" ]]; then
+        echo -e "${GREEN}  Already up to date (${current})${NC}"
+    elif [[ -n "$new_ver" ]]; then
+        echo -e "${YELLOW}  Updated ${current:-unknown} -> ${new_ver}${NC}"
+    else
+        echo -e "${GREEN}  Update check complete${NC}"
     fi
 }
 
@@ -1189,6 +1220,8 @@ do_update() {
     echo ""
     check_npm_package "Codex CLI" "@openai/codex" "codex"
     echo ""
+    check_hermes
+    echo ""
     echo -e "${GREEN}All AI tools checked.${NC}"
 }
 
@@ -1211,6 +1244,7 @@ case "$tool" in
     codex)   exec codex --yolo "$@" ;;
     gemini)  exec gemini --yolo "$@" ;;
     copilot) exec gh copilot --yolo "$@" ;;
+    hermes)  exec hermes --yolo "$@" ;;
     update)  do_update ;;
     usage)   do_usage ;;
     *)
@@ -1219,6 +1253,7 @@ case "$tool" in
         echo "  ai codex    -> codex --yolo"
         echo "  ai gemini   -> gemini --yolo"
         echo "  ai copilot  -> gh copilot --yolo"
+        echo "  ai hermes   -> hermes --yolo"
         echo "  ai update   -> update all AI tools"
         echo "  ai usage    -> show remaining usage by provider"
         echo ""
