@@ -62,7 +62,8 @@ install_file() {
     local temp_file
     temp_file="$(mktemp)"
     trap 'rm -f "$temp_file"' RETURN
-    curl -fsSL "$source" -o "$temp_file"
+    # Add a cache-busting query parameter for raw.githubusercontent.com
+    curl -fsSL "${source}?$(date +%s)" -o "$temp_file"
     if [[ -w "$dest_dir" ]]; then
         install -m "$mode" "$temp_file" "$dest"
     else
@@ -74,11 +75,37 @@ echo "Detecting operating system..."
 
 case "$(uname -s)" in
     Linux*|Darwin*)
-        INSTALL_DIR="${AI_CLI_INSTALL_DIR:-/usr/local/bin}"
+        # If ai is already in PATH, try to overwrite that one specifically
+        # unless AI_CLI_INSTALL_DIR is set.
+        CURRENT_AI="$(which ai 2>/dev/null || true)"
+        if [[ -n "${AI_CLI_INSTALL_DIR:-}" ]]; then
+            INSTALL_DIR="$AI_CLI_INSTALL_DIR"
+            INSTALL_PATH="$INSTALL_DIR/ai"
+        elif [[ -n "$CURRENT_AI" ]]; then
+            INSTALL_PATH="$CURRENT_AI"
+            INSTALL_DIR="$(dirname "$INSTALL_PATH")"
+        else
+            INSTALL_DIR="/usr/local/bin"
+            INSTALL_PATH="$INSTALL_DIR/ai"
+        fi
+
         SOURCE_PATH="$(linux_source_path)"
         echo "Detected: $(uname -s)"
-        echo "Installing ai -> $INSTALL_DIR/ai"
-        install_file "$SOURCE_PATH" "$INSTALL_DIR/ai" 0755
+        echo "Installing ai -> $INSTALL_PATH"
+        install_file "$SOURCE_PATH" "$INSTALL_PATH" 0755
+
+        # Check if there are other 'ai' binaries in PATH that might shadow this one
+        ALL_AIS="$(which -a ai 2>/dev/null || true)"
+        FIRST_AI="$(echo "$ALL_AIS" | head -n 1)"
+        if [[ -n "$FIRST_AI" && "$FIRST_AI" != "$INSTALL_PATH" ]]; then
+            echo ""
+            echo "WARNING: The 'ai' command you just installed at $INSTALL_PATH"
+            echo "is being shadowed by another 'ai' at $FIRST_AI"
+            echo "which appears earlier in your PATH."
+            echo ""
+            echo "To fix this, you may want to remove $FIRST_AI"
+            echo "or update your PATH to prioritize $INSTALL_DIR."
+        fi
 
         echo "Installed successfully. Run 'ai' to get started."
         ;;
@@ -95,7 +122,7 @@ case "$(uname -s)" in
             cp "$SOURCE_PATH" "$TARGET_PATH"
         else
             echo "Downloading from: $SOURCE_PATH"
-            curl -fsSL "$SOURCE_PATH" -o "$TARGET_PATH"
+            curl -fsSL "${SOURCE_PATH}?$(date +%s)" -o "$TARGET_PATH"
         fi
 
         # Create ai.cmd wrapper if it doesn't exist
