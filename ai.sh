@@ -290,12 +290,16 @@ check_gh_cli() {
             echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
         fi
     elif command -v pacman &>/dev/null; then
-        # Check if an update is actually available
-        if pacman -Qu github-cli >/dev/null 2>&1; then
+        local local_ver sync_ver
+        local_ver=$(pacman -Qi github-cli 2>/dev/null | grep "^Version" | awk '{print $3}' | head -n 1 || true)
+        sync_ver=$(pacman -Si github-cli 2>/dev/null | grep "^Version" | awk '{print $3}' | head -n 1 || true)
+
+        # Only attempt install if sync version is different (newer) than local
+        if [[ -n "$sync_ver" && "$local_ver" != "$sync_ver" ]]; then
             if $VERBOSE; then
-                sudo pacman -S --noconfirm github-cli 2>&1 || true
+                sudo pacman -Sy --noconfirm github-cli 2>&1 || true
             else
-                sudo pacman -S --noconfirm github-cli 2>&1 >/dev/null || true
+                sudo pacman -Sy --noconfirm github-cli 2>&1 >/dev/null || true
             fi
         fi
         local new_ver
