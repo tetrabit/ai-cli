@@ -6,12 +6,19 @@ RAW="https://raw.githubusercontent.com/$REPO/main"
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR=""
 
+USE_LOCAL=false
+for arg in "$@"; do
+    if [[ "$arg" == "--local" ]]; then
+        USE_LOCAL=true
+    fi
+done
+
 if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
     SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 fi
 
 linux_source_path() {
-    if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.sh" ]]; then
+    if $USE_LOCAL && [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.sh" ]]; then
         printf '%s\n' "$SCRIPT_DIR/ai.sh"
     else
         printf '%s\n' "$RAW/ai.sh"
@@ -19,7 +26,7 @@ linux_source_path() {
 }
 
 windows_source_path() {
-    if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.ps1" ]]; then
+    if $USE_LOCAL && [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.ps1" ]]; then
         printf '%s\n' "$SCRIPT_DIR/ai.ps1"
     else
         printf '%s\n' "$RAW/ai.ps1"
@@ -42,6 +49,7 @@ install_file() {
     fi
 
     if [[ -f "$source" ]]; then
+        echo "Installing from local source: $source"
         if [[ -w "$dest_dir" ]]; then
             install -m "$mode" "$source" "$dest"
         else
@@ -50,6 +58,7 @@ install_file() {
         return
     fi
 
+    echo "Downloading from: $source"
     local temp_file
     temp_file="$(mktemp)"
     trap 'rm -f "$temp_file"' RETURN
@@ -82,8 +91,10 @@ case "$(uname -s)" in
 
         mkdir -p "$(cygpath "$INSTALL_DIR" 2>/dev/null || echo "/c/tools")"
         if [[ -f "$SOURCE_PATH" ]]; then
+            echo "Installing from local source: $SOURCE_PATH"
             cp "$SOURCE_PATH" "$TARGET_PATH"
         else
+            echo "Downloading from: $SOURCE_PATH"
             curl -fsSL "$SOURCE_PATH" -o "$TARGET_PATH"
         fi
 
