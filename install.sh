@@ -2,7 +2,8 @@
 set -euo pipefail
 
 REPO="tetrabit/ai-cli"
-RAW="https://raw.githubusercontent.com/$REPO/main"
+RAW_HOST="https://raw.githubusercontent.com"
+REMOTE_REF="${AI_CLI_REF:-}"
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR=""
 
@@ -19,6 +20,33 @@ if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
     SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 fi
 
+resolve_remote_ref() {
+    if [[ -n "$REMOTE_REF" ]]; then
+        printf '%s\n' "$REMOTE_REF"
+        return
+    fi
+
+    local sha=""
+    sha=$(
+        curl -fsSL "https://api.github.com/repos/$REPO/commits/main" 2>/dev/null \
+            | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-f]\{40\}\)".*/\1/p' \
+            | head -n 1
+    ) || true
+
+    if [[ -n "$sha" ]]; then
+        REMOTE_REF="$sha"
+    else
+        REMOTE_REF="main"
+    fi
+
+    printf '%s\n' "$REMOTE_REF"
+}
+
+remote_source_path() {
+    local file="$1"
+    printf '%s/%s/%s/%s\n' "$RAW_HOST" "$REPO" "$(resolve_remote_ref)" "$file"
+}
+
 local_sources_available() {
     [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.sh" && -f "$SCRIPT_DIR/ai.ps1" ]]
 }
@@ -31,7 +59,7 @@ linux_source_path() {
     if should_use_local_sources && [[ -f "$SCRIPT_DIR/ai.sh" ]]; then
         printf '%s\n' "$SCRIPT_DIR/ai.sh"
     else
-        printf '%s\n' "$RAW/ai.sh"
+        remote_source_path "ai.sh"
     fi
 }
 
@@ -39,7 +67,7 @@ windows_source_path() {
     if should_use_local_sources && [[ -f "$SCRIPT_DIR/ai.ps1" ]]; then
         printf '%s\n' "$SCRIPT_DIR/ai.ps1"
     else
-        printf '%s\n' "$RAW/ai.ps1"
+        remote_source_path "ai.ps1"
     fi
 }
 
