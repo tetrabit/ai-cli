@@ -358,10 +358,14 @@ check_hermes() {
     local current
     current=$(hermes --version 2>/dev/null | head -n 1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
 
+    # Hermes updates reinstall Node dependencies whose postinstall hooks may
+    # write directly to /dev/tty, bypassing stdout/stderr redirection.  CI=true
+    # keeps those cosmetic install demos quiet without disabling required
+    # install scripts.
     if $VERBOSE; then
-        hermes update
+        CI="${CI:-true}" hermes update
     else
-        hermes update >/dev/null 2>&1
+        CI="${CI:-true}" hermes update >/dev/null 2>&1
     fi
 
     local new_ver

@@ -72,7 +72,21 @@ function Update-Hermes {
     $verOutput = hermes --version 2>$null | Select-Object -First 1
     $current = if ($verOutput -match 'v(\d+\.\d+\.\d+)') { $Matches[1] } else { $null }
 
-    hermes update >$null 2>&1
+    $hadCi = Test-Path Env:CI
+    $previousCi = $env:CI
+    try {
+        # Hermes updates reinstall Node dependencies whose postinstall hooks may
+        # print cosmetic demos directly to the terminal. CI=true suppresses
+        # those demos without disabling required install scripts.
+        if (-not $env:CI) { $env:CI = "true" }
+        hermes update >$null 2>&1
+    } finally {
+        if ($hadCi) {
+            $env:CI = $previousCi
+        } else {
+            Remove-Item Env:CI -ErrorAction SilentlyContinue
+        }
+    }
 
     $verOutput = hermes --version 2>$null | Select-Object -First 1
     $newVer = if ($verOutput -match 'v(\d+\.\d+\.\d+)') { $Matches[1] } else { $null }
