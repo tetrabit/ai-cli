@@ -142,5 +142,5 @@ fi
 echo ""
 echo -e "${GREEN}Bootstrap complete. You can now run the ai-cli installer:${NC}"
 echo ""
-echo "  curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/main/install.sh | bash"
+echo "  curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/refs/heads/main/install.sh | bash"
 echo ""

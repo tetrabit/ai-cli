@@ -15,7 +15,7 @@ A single `ai` command to launch and update all your AI coding assistants.
 **Linux / macOS:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/refs/heads/main/install.sh | bash
 ```
 
 From a local checkout, `./install.sh` installs the local `ai.sh`/`ai.ps1` next to it. Use `./install.sh --remote` to force downloading the latest `main` version instead.
@@ -23,7 +23,7 @@ From a local checkout, `./install.sh` installs the local `ai.sh`/`ai.ps1` next t
 **Windows (Git Bash / MSYS2):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/refs/heads/main/install.sh | bash
 ```
 
 **Windows (PowerShell only):**
