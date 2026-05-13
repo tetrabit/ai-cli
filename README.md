@@ -18,6 +18,8 @@ A single `ai` command to launch and update all your AI coding assistants.
 curl -fsSL https://raw.githubusercontent.com/tetrabit/ai-cli/main/install.sh | bash
 ```
 
+From a local checkout, `./install.sh` installs the local `ai.sh`/`ai.ps1` next to it. Use `./install.sh --remote` to force downloading the latest `main` version instead.
+
 **Windows (Git Bash / MSYS2):**
 
 ```bash
@@ -60,6 +62,21 @@ Checks each tool for updates before installing. If Claude Code, Gemini CLI, or C
 | Codex CLI | npm version check | npm version check | npm version check |
 | Hermes Agent | `hermes update` | `hermes update` | `hermes update` |
 
+## Choose Which Tools Are Checked
+
+Run setup to choose which tools are included by default:
+
+```bash
+ai setup
+```
+
+Setup writes a small config file at `${XDG_CONFIG_HOME:-~/.config}/ai-cli/config` (or `AI_CLI_CONFIG` if set). If no config exists, ai-cli keeps the original behavior and checks every supported tool.
+
+`ai setup` controls:
+
+- which tools run during `ai update`
+- which providers run during `ai usage`
+
 Example output:
 
 ```
@@ -87,7 +104,7 @@ All AI tools checked.
 ai usage
 ```
 
-Shows remaining usage as percentage bars for the supported providers in `ai.sh`:
+Shows remaining usage as percentage bars for the selected supported providers in `ai.sh`:
 
 - Claude Code: 5-hour and 7-day limits
 - Codex CLI: 5-hour and 7-day limits

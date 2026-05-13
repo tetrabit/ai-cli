@@ -7,18 +7,28 @@ SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR=""
 
 USE_LOCAL=false
+FORCE_REMOTE=false
 for arg in "$@"; do
-    if [[ "$arg" == "--local" ]]; then
-        USE_LOCAL=true
-    fi
+    case "$arg" in
+        --local) USE_LOCAL=true ;;
+        --remote) FORCE_REMOTE=true ;;
+    esac
 done
 
 if [[ -n "$SCRIPT_SOURCE" && -f "$SCRIPT_SOURCE" ]]; then
     SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 fi
 
+local_sources_available() {
+    [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.sh" && -f "$SCRIPT_DIR/ai.ps1" ]]
+}
+
+should_use_local_sources() {
+    ! $FORCE_REMOTE && { $USE_LOCAL || local_sources_available; }
+}
+
 linux_source_path() {
-    if $USE_LOCAL && [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.sh" ]]; then
+    if should_use_local_sources && [[ -f "$SCRIPT_DIR/ai.sh" ]]; then
         printf '%s\n' "$SCRIPT_DIR/ai.sh"
     else
         printf '%s\n' "$RAW/ai.sh"
@@ -26,7 +36,7 @@ linux_source_path() {
 }
 
 windows_source_path() {
-    if $USE_LOCAL && [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.ps1" ]]; then
+    if should_use_local_sources && [[ -f "$SCRIPT_DIR/ai.ps1" ]]; then
         printf '%s\n' "$SCRIPT_DIR/ai.ps1"
     else
         printf '%s\n' "$RAW/ai.ps1"
