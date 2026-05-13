@@ -897,6 +897,7 @@ else:
                     payload = json.loads(response.read().decode("utf-8"))
                 save_cached_payload(payload)
                 rate_limited_until = None
+                cached_at = None
                 break
             except urllib.error.HTTPError as exc:
                 if exc.code == 401 and not token_refreshed:
