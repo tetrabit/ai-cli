@@ -518,15 +518,55 @@ check_gh_copilot() {
     fi
 }
 
+install_hermes() {
+    local install_url="https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh"
+
+    if $VERBOSE; then
+        curl -fsSL "$install_url" | CI="${CI:-true}" bash -s -- --skip-setup
+    else
+        curl -fsSL "$install_url" 2>/dev/null | CI="${CI:-true}" bash -s -- --skip-setup >/dev/null 2>&1
+    fi
+}
+
+read_hermes_version() {
+    local output
+
+    output=$(hermes --version 2>/dev/null || hermes version 2>/dev/null || true)
+    printf '%s\n' "$output" | head -n 1 | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true
+}
+
 check_hermes() {
     echo -e "${CYAN}==> Checking Hermes Agent...${NC}"
     if ! command -v hermes >/dev/null 2>&1; then
-        echo -e "${YELLOW}  Not installed${NC}"
+        echo -e "${YELLOW}  Not installed, installing...${NC}"
+        if ! install_hermes; then
+            echo -e "${YELLOW}  Installation failed${NC}"
+            return
+        fi
+
+        prepend_path_dir "$HOME/.local/bin"
+        prepend_path_dir "/usr/local/bin"
+        if [[ -n "${PREFIX:-}" ]]; then
+            prepend_path_dir "$PREFIX/bin"
+        fi
+
+        if ! command -v hermes >/dev/null 2>&1; then
+            echo -e "${YELLOW}  Installed, but hermes is not on PATH yet. Restart your shell and try again.${NC}"
+            return
+        fi
+
+        local installed
+        installed=$(read_hermes_version)
+        if [[ -n "$installed" ]]; then
+            echo -e "${GREEN}  Installed (${installed})${NC}"
+        else
+            echo -e "${GREEN}  Installed${NC}"
+        fi
         return
     fi
 
     local current
-    current=$(hermes --version 2>/dev/null | head -n 1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
+    current=$(read_hermes_version)
 
     # Hermes updates reinstall Node dependencies whose postinstall hooks may
     # write directly to /dev/tty, bypassing stdout/stderr redirection.  CI=true
@@ -539,7 +579,7 @@ check_hermes() {
     fi
 
     local new_ver
-    new_ver=$(hermes --version 2>/dev/null | head -n 1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
+    new_ver=$(read_hermes_version)
 
     if [[ -n "$current" && "$current" == "$new_ver" ]]; then
         echo -e "${GREEN}  Already up to date (${current})${NC}"

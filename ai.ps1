@@ -173,15 +173,75 @@ function Update-NpmPackage($DisplayName, $Package) {
     }
 }
 
-function Update-Hermes {
-    Write-Host "==> Checking Hermes Agent..." -ForegroundColor Cyan
+function Add-HermesPathForCurrentSession {
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA "hermes\hermes-agent\venv\Scripts"),
+        (Join-Path $env:LOCALAPPDATA "hermes\hermes-agent")
+    )
+    $pathItems = $env:Path -split ";"
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate) -and ($pathItems -notcontains $candidate)) {
+            $env:Path = "$candidate;$env:Path"
+            $pathItems = $env:Path -split ";"
+        }
+    }
+}
+
+function Get-HermesVersion {
     if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {
-        Write-Host "  Not installed" -ForegroundColor Yellow
-        return
+        return $null
     }
 
     $verOutput = hermes --version 2>$null | Select-Object -First 1
-    $current = if ($verOutput -match 'v(\d+\.\d+\.\d+)') { $Matches[1] } else { $null }
+    if (-not $verOutput) {
+        $verOutput = hermes version 2>$null | Select-Object -First 1
+    }
+    if ($verOutput -match 'v?(\d+\.\d+\.\d+)') {
+        return $Matches[1]
+    }
+    return $null
+}
+
+function Install-Hermes {
+    $installUrl = "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1"
+
+    try {
+        $installer = Invoke-RestMethod -Uri $installUrl -UseBasicParsing
+        $scriptBlock = [scriptblock]::Create($installer)
+        & $scriptBlock -SkipSetup -NonInteractive
+    } catch {
+        Write-Host "  Installation failed: $_" -ForegroundColor Yellow
+        return $false
+    }
+
+    Add-HermesPathForCurrentSession
+    return $true
+}
+
+function Update-Hermes {
+    Write-Host "==> Checking Hermes Agent..." -ForegroundColor Cyan
+    if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {
+        Write-Host "  Not installed, installing..." -ForegroundColor Yellow
+        if (-not (Install-Hermes)) {
+            return
+        }
+
+        if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {
+            Write-Host "  Installed, but hermes is not on PATH yet. Restart your shell and try again." -ForegroundColor Yellow
+            return
+        }
+
+        $installed = Get-HermesVersion
+        if ($installed) {
+            Write-Host "  Installed ($installed)" -ForegroundColor Green
+        } else {
+            Write-Host "  Installed" -ForegroundColor Green
+        }
+        return
+    }
+
+    $current = Get-HermesVersion
 
     $hadCi = Test-Path Env:CI
     $previousCi = $env:CI
@@ -199,8 +259,7 @@ function Update-Hermes {
         }
     }
 
-    $verOutput = hermes --version 2>$null | Select-Object -First 1
-    $newVer = if ($verOutput -match 'v(\d+\.\d+\.\d+)') { $Matches[1] } else { $null }
+    $newVer = Get-HermesVersion
 
     if ($current -and $current -eq $newVer) {
         Write-Host "  Already up to date ($current)" -ForegroundColor Green

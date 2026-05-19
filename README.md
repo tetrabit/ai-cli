@@ -51,7 +51,7 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks each tool for updates before installing. If Claude Code, Gemini CLI, or Codex CLI are missing, `ai update` installs them with npm. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
+Checks each tool for updates before installing. If Gemini CLI, Codex CLI, or Hermes Agent are missing, `ai update` installs them first. Gemini and Codex use npm; Hermes uses the official Hermes installer. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
 
 | Tool | Windows | Linux | macOS |
 |------|---------|-------|-------|
@@ -60,7 +60,7 @@ Checks each tool for updates before installing. If Claude Code, Gemini CLI, or C
 | GitHub Copilot CLI | `gh copilot update` | `gh copilot update` | `gh copilot update` |
 | Gemini CLI | npm version check | npm version check | npm version check |
 | Codex CLI | npm version check | npm version check | npm version check |
-| Hermes Agent | `hermes update` | `hermes update` | `hermes update` |
+| Hermes Agent | official installer when missing, otherwise `hermes update` | official installer when missing, otherwise `hermes update` | official installer when missing, otherwise `hermes update` |
 
 ## Choose Which Tools Are Checked
 
