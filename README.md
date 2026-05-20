@@ -40,6 +40,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tetrabit/ai-cli/main/a
 | OpenAI Codex | `ai codex` | `codex --yolo` |
 | Google Gemini | `ai gemini` | `gemini --yolo` |
 | GitHub Copilot | `ai copilot` | `gh copilot --yolo` |
+| Pi Coding Agent | `ai pi` | `pi` |
 | Hermes Agent | `ai hermes` | `hermes --yolo` |
 
 All extra arguments are forwarded to the underlying tool.
@@ -51,7 +52,9 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks each tool for updates before installing. If Gemini CLI, Codex CLI, or Hermes Agent are missing, `ai update` installs them first. Gemini and Codex use npm; Hermes uses the official Hermes installer. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
+Checks each tool for updates before installing. If Gemini CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Gemini, Codex, and Pi use npm; Hermes uses the official Hermes installer. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
+
+`ai update` also installs or updates the Pi vs Claude Code harness from `https://github.com/disler/pi-vs-claude-code`. The checkout lives at `${XDG_DATA_HOME:-~/.local/share}/ai-cli/pi-vs-claude-code` on Linux/macOS, `%LOCALAPPDATA%\ai-cli\pi-vs-claude-code` on Windows, or `AI_CLI_PI_VS_CLAUDE_CODE_DIR` when set. Bun is required to install its dependencies, and `just` is required to use the bundled recipes.
 
 | Tool | Windows | Linux | macOS |
 |------|---------|-------|-------|
@@ -60,11 +63,13 @@ Checks each tool for updates before installing. If Gemini CLI, Codex CLI, or Her
 | GitHub Copilot CLI | `gh copilot update` | `gh copilot update` | `gh copilot update` |
 | Gemini CLI | npm version check | npm version check | npm version check |
 | Codex CLI | npm version check | npm version check | npm version check |
+| Pi Coding Agent | npm version check | npm version check | npm version check |
+| Pi vs Claude Code | git clone/pull + `bun install` | git clone/pull + `bun install` | git clone/pull + `bun install` |
 | Hermes Agent | official installer when missing, otherwise `hermes update` | official installer when missing, otherwise `hermes update` | official installer when missing, otherwise `hermes update` |
 
 ## Choose Which Tools Are Checked
 
-Run setup to choose which tools are included by default:
+Run setup to choose which tools are installed or updated by default:
 
 ```bash
 ai setup
@@ -74,7 +79,7 @@ Setup writes a small config file at `${XDG_CONFIG_HOME:-~/.config}/ai-cli/config
 
 `ai setup` controls:
 
-- which tools run during `ai update`
+- which tools are installed or updated during `ai update`
 - which providers run during `ai usage`
 
 Example output:
@@ -94,6 +99,13 @@ Example output:
 
 ==> Checking Codex CLI...
   Already up to date (0.113.0)
+
+==> Checking Pi Coding Agent...
+  Already up to date (0.75.4)
+
+==> Checking Pi vs Claude Code...
+  Repo already up to date (a1b2c3d)
+  Dependencies installed. Run recipes from ~/.local/share/ai-cli/pi-vs-claude-code with 'just'.
 
 All AI tools checked.
 ```
@@ -131,6 +143,6 @@ Example output:
 
 ## Prerequisites
 
-- **Windows:** [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
-- **Linux:** [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
-- **macOS:** [Homebrew](https://brew.sh/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/)
+- **Windows:** [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/), [Bun](https://bun.sh/) and [just](https://just.systems/) for Pi vs Claude Code
+- **Linux:** [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/), [Bun](https://bun.sh/) and [just](https://just.systems/) for Pi vs Claude Code
+- **macOS:** [Homebrew](https://brew.sh/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/), [Bun](https://bun.sh/) and [just](https://just.systems/) for Pi vs Claude Code

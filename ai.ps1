@@ -11,6 +11,8 @@ $UpdateTools = @(
     @{ Key = "copilot"; Label = "GitHub Copilot CLI" },
     @{ Key = "gemini"; Label = "Gemini CLI" },
     @{ Key = "codex"; Label = "Codex CLI" },
+    @{ Key = "pi"; Label = "Pi Coding Agent" },
+    @{ Key = "pi_vs_claude_code"; Label = "Pi vs Claude Code" },
     @{ Key = "opencode"; Label = "OpenCode" },
     @{ Key = "hermes"; Label = "Hermes Agent" }
 )
@@ -26,6 +28,12 @@ function Get-AiCliConfigPath {
     if ($env:AI_CLI_CONFIG) { return $env:AI_CLI_CONFIG }
     if ($env:XDG_CONFIG_HOME) { return (Join-Path $env:XDG_CONFIG_HOME "ai-cli/config") }
     return (Join-Path $HOME ".config/ai-cli/config")
+}
+
+function Get-AiCliDataDir {
+    if ($env:XDG_DATA_HOME) { return (Join-Path $env:XDG_DATA_HOME "ai-cli") }
+    if ($env:LOCALAPPDATA) { return (Join-Path $env:LOCALAPPDATA "ai-cli") }
+    return (Join-Path $HOME ".local/share/ai-cli")
 }
 
 function Get-AiCliConfigKey($Category, $ToolName) {
@@ -83,11 +91,11 @@ function Invoke-AiCliSetup {
     )
 
     Write-Host "ai-cli setup" -ForegroundColor Cyan
-    Write-Host "Choose which tools ai-cli should include by default."
+    Write-Host "Choose which tools ai-cli should install or update by default."
     Write-Host "Config: $path"
     Write-Host ""
 
-    Write-Host "Update checks used by 'ai update':" -ForegroundColor Cyan
+    Write-Host "Tools installed or updated by 'ai update':" -ForegroundColor Cyan
     foreach ($toolInfo in $UpdateTools) {
         $toolKey = $toolInfo["Key"]
         $toolLabel = $toolInfo["Label"]
@@ -170,6 +178,78 @@ function Update-NpmPackage($DisplayName, $Package) {
     } else {
         Write-Host "  Updating $current -> $latest..." -ForegroundColor Yellow
         npm install -g "${Package}@latest" --loglevel error
+    }
+}
+
+function Get-PiVsClaudeCodeDir {
+    if ($env:AI_CLI_PI_VS_CLAUDE_CODE_DIR) { return $env:AI_CLI_PI_VS_CLAUDE_CODE_DIR }
+    return (Join-Path (Get-AiCliDataDir) "pi-vs-claude-code")
+}
+
+function Get-GitHead($RepoDir) {
+    $head = git -C $RepoDir rev-parse --short HEAD 2>$null
+    if ($LASTEXITCODE -eq 0) { return (($head | Select-Object -First 1) -as [string]) }
+    return $null
+}
+
+function Update-PiVsClaudeCode {
+    Write-Host "==> Checking Pi vs Claude Code..." -ForegroundColor Cyan
+
+    $repoUrl = "https://github.com/disler/pi-vs-claude-code.git"
+    $repoDir = Get-PiVsClaudeCodeDir
+    $gitDir = Join-Path $repoDir ".git"
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host "  Git is required to install this repo." -ForegroundColor Yellow
+        return
+    }
+
+    if (Test-Path $gitDir) {
+        $current = Get-GitHead $repoDir
+        git -C $repoDir pull --ff-only *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Update failed. Run git pull manually in $repoDir for details." -ForegroundColor Yellow
+            return
+        }
+
+        $updated = Get-GitHead $repoDir
+        if ($current -and $current -eq $updated) {
+            Write-Host "  Repo already up to date ($updated)" -ForegroundColor Green
+        } else {
+            $displayCurrent = if ($current) { $current } else { "unknown" }
+            $displayUpdated = if ($updated) { $updated } else { "unknown" }
+            Write-Host "  Updated repo $displayCurrent -> $displayUpdated" -ForegroundColor Yellow
+        }
+    } elseif (Test-Path $repoDir) {
+        Write-Host "  $repoDir exists but is not a git checkout. Set AI_CLI_PI_VS_CLAUDE_CODE_DIR to another path." -ForegroundColor Yellow
+        return
+    } else {
+        $parent = Split-Path -Parent $repoDir
+        if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+        Write-Host "  Not installed, cloning..." -ForegroundColor Yellow
+        git clone $repoUrl $repoDir *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Clone failed. Run git clone manually for details." -ForegroundColor Yellow
+            return
+        }
+        Write-Host "  Cloned to $repoDir" -ForegroundColor Green
+    }
+
+    if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
+        Write-Host "  Bun is required for dependencies. Install Bun, then rerun 'ai update'." -ForegroundColor Yellow
+        return
+    }
+
+    bun install --cwd $repoDir *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  Dependency install failed. Run 'bun install --cwd `"$repoDir`"' for details." -ForegroundColor Yellow
+        return
+    }
+
+    if (Get-Command just -ErrorAction SilentlyContinue) {
+        Write-Host "  Dependencies installed. Run recipes from $repoDir with 'just'." -ForegroundColor Green
+    } else {
+        Write-Host "  Dependencies installed. Install 'just' to use the bundled recipes in $repoDir." -ForegroundColor Yellow
     }
 }
 
@@ -276,6 +356,7 @@ switch ($Tool) {
     "codex"   { codex --yolo @ExtraArgs }
     "gemini"  { gemini --yolo @ExtraArgs }
     "copilot" { gh copilot --yolo @ExtraArgs }
+    "pi"      { pi @ExtraArgs }
     "hermes"  { hermes --yolo @ExtraArgs }
     "update"  {
         $ran = $false
@@ -304,6 +385,16 @@ switch ($Tool) {
             Update-NpmPackage "Codex CLI" "@openai/codex"
             $ran = $true
         }
+        if (Test-AiCliEnabled "update" "pi") {
+            if ($ran) { Write-Host "" }
+            Update-NpmPackage "Pi Coding Agent" "@earendil-works/pi-coding-agent"
+            $ran = $true
+        }
+        if (Test-AiCliEnabled "update" "pi_vs_claude_code") {
+            if ($ran) { Write-Host "" }
+            Update-PiVsClaudeCode
+            $ran = $true
+        }
         if (Test-AiCliEnabled "update" "opencode") {
             if ($ran) { Write-Host "" }
             Update-NpmPackage "OpenCode" "opencode-ai"
@@ -328,6 +419,7 @@ switch ($Tool) {
         Write-Host "  ai codex    -> codex --yolo"
         Write-Host "  ai gemini   -> gemini --yolo"
         Write-Host "  ai copilot  -> gh copilot --yolo"
+        Write-Host "  ai pi       -> pi"
         Write-Host "  ai hermes   -> hermes --yolo"
         Write-Host "  ai update   -> update all AI tools"
         Write-Host "  ai setup    -> choose tools for update and usage checks"
