@@ -44,8 +44,8 @@ npm_user_bin() {
 
 prepend_path_dir "$(npm_user_bin)"
 
-AI_CLI_UPDATE_TOOLS=(claude gh_cli copilot gemini codex pi pi_vs_claude_code hermes)
-AI_CLI_USAGE_TOOLS=(claude codex gemini copilot)
+AI_CLI_UPDATE_TOOLS=(claude gh_cli copilot antigravity codex pi pi_vs_claude_code hermes)
+AI_CLI_USAGE_TOOLS=(claude codex antigravity copilot)
 
 ai_cli_data_dir() {
     if [[ -n "${XDG_DATA_HOME:-}" ]]; then
@@ -106,7 +106,16 @@ ai_cli_enabled() {
     local tool="$2"
     local value
 
-    value=$(ai_cli_config_get "$(ai_cli_config_key "$category" "$tool")" "1")
+    local config_tool="$tool"
+    if [[ "$tool" == "antigravity" ]]; then
+        local new_key
+        new_key="$(ai_cli_config_key "$category" "antigravity")"
+        if [[ "$(ai_cli_config_get "$new_key" "")" == "" ]]; then
+            config_tool="gemini"
+        fi
+    fi
+
+    value=$(ai_cli_config_get "$(ai_cli_config_key "$category" "$config_tool")" "1")
     value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
 
     case "$value" in
@@ -121,7 +130,7 @@ ai_cli_tool_label() {
         claude)  printf 'Claude Code' ;;
         gh_cli)  printf 'GitHub CLI (Copilot dependency)' ;;
         copilot) printf 'GitHub Copilot CLI' ;;
-        gemini)  printf 'Gemini CLI' ;;
+        antigravity) printf 'Antigravity CLI' ;;
         codex)   printf 'Codex CLI' ;;
         pi)      printf 'Pi Coding Agent' ;;
         pi_vs_claude_code) printf 'Pi vs Claude Code' ;;
@@ -476,6 +485,43 @@ check_pi_vs_claude_code() {
         echo -e "${GREEN}  Dependencies installed. Run recipes from $repo_dir with 'just'.${NC}"
     else
         echo -e "${YELLOW}  Dependencies installed. Install 'just' to use the bundled recipes in $repo_dir.${NC}"
+    fi
+}
+
+check_antigravity() {
+    echo -e "${CYAN}==> Checking Antigravity CLI...${NC}"
+    local old_ver=""
+    if command -v agy >/dev/null 2>&1; then
+        old_ver=$(agy --version 2>/dev/null || true)
+    else
+        echo -e "${YELLOW}  Not installed, installing...${NC}"
+    fi
+
+    local installer_script
+    if ! installer_script=$(curl -fsSL https://antigravity.google/cli/install.sh 2>/dev/null); then
+        echo -e "${YELLOW}  Failed to download Antigravity installer${NC}"
+        return
+    fi
+
+    if $VERBOSE; then
+        echo "$installer_script" | bash
+    else
+        echo "$installer_script" | bash >/dev/null 2>&1
+    fi
+
+    if ! command -v agy >/dev/null 2>&1; then
+        echo -e "${YELLOW}  Installation failed${NC}"
+        return
+    fi
+
+    local new_ver
+    new_ver=$(agy --version 2>/dev/null || true)
+    if [[ -z "$old_ver" ]]; then
+        echo -e "${GREEN}  Installed (${new_ver})${NC}"
+    elif [[ "$old_ver" == "$new_ver" ]]; then
+        echo -e "${GREEN}  Already up to date (${new_ver})${NC}"
+    else
+        echo -e "${YELLOW}  Updated ${old_ver} -> ${new_ver}${NC}"
     fi
 }
 
@@ -1257,173 +1303,258 @@ PY
     print_usage_rows "$output" "Usage unavailable"
 }
 
-usage_gemini() {
-    echo -e "${CYAN}==> Gemini CLI...${NC}"
-    local output gemini_bin
+usage_antigravity() {
+    echo -e "${CYAN}==> Antigravity CLI...${NC}"
+    local output
 
-    gemini_bin=$(python3 <<'PY' 2>/dev/null
+    if ! output=$(python3 <<'PY' 2>/dev/null
+import json
+import sys
+import time
+import urllib.parse
+import urllib.request
+import urllib.error
+import subprocess
 import os
-import shutil
+import re
+from datetime import datetime
+from pathlib import Path
 
-path = shutil.which("gemini")
-if path:
-    print(os.path.realpath(path))
-PY
+MODEL_MAP = {
+    "gemini-2.5-flash": "Gemini 3.5 Flash (High)",
+    "gemini-2.5-flash-lite": "Gemini 3.5 Flash (Medium)",
+    "gemini-2.5-pro": "Gemini 3.1 Pro (High)",
+    "gemini-3-flash-preview": "Gemini 3.1 Pro (Low)",
+    "gemini-3-pro-preview": "Claude Sonnet 4.6 (Thinking)",
+    "gemini-3.1-flash-lite": "Claude Opus 4.6 (Thinking)",
+    "gemini-3.1-pro-preview": "GPT-OSS 120B (Medium)"
+}
+
+def fmt_reset(value):
+    if not value:
+        return ""
+    try:
+        value = value.replace("Z", "+00:00")
+        reset_at = datetime.fromisoformat(value).astimezone()
+        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
+        days = delta_seconds // 86400
+        hours = (delta_seconds % 86400) // 3600
+        minutes = (delta_seconds % 3600) // 60
+        if days:
+            delta_text = f"{days}d {hours}h"
+        elif hours:
+            delta_text = f"{hours}h {minutes}m"
+        else:
+            delta_text = f"{minutes}m"
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({delta_text})"
+    except Exception:
+        return value
+
+def get_oauth_credentials():
+    paths = []
+    try:
+        res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, shell=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            paths.append(Path(res.stdout.strip()))
+    except Exception:
+        pass
+    
+    paths.append(Path.home() / ".npm-global" / "lib" / "node_modules")
+    paths.append(Path("/usr/local/lib/node_modules"))
+    paths.append(Path("/usr/lib/node_modules"))
+    
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        paths.append(Path(appdata) / "npm" / "node_modules")
+    paths.append(Path.home() / "AppData" / "Roaming" / "npm" / "node_modules")
+    
+    program_files = os.environ.get("ProgramFiles")
+    if program_files:
+        paths.append(Path(program_files) / "nodejs" / "node_modules")
+
+    seen = set()
+    search_dirs = []
+    for p in paths:
+        try:
+            resolved = p.resolve()
+            if resolved not in seen and resolved.exists():
+                seen.add(resolved)
+                search_dirs.append(resolved)
+        except Exception:
+            pass
+
+    client_id_pat = re.compile(r'OAUTH_CLIENT_ID\s*=\s*"([^"]+)"')
+    client_secret_pat = re.compile(r'OAUTH_CLIENT_SECRET\s*=\s*"([^"]+)"')
+
+    for s_dir in search_dirs:
+        bundle_dir = s_dir / "@google" / "gemini-cli" / "bundle"
+        if bundle_dir.exists():
+            for file_path in bundle_dir.glob("chunk-*.js"):
+                try:
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    id_match = client_id_pat.search(content)
+                    secret_match = client_secret_pat.search(content)
+                    if id_match and secret_match:
+                        return id_match.group(1), secret_match.group(1)
+                except Exception:
+                    pass
+    return None, None
+
+def refresh_access_token(path, creds):
+    refresh_token = creds.get("refresh_token")
+    if not refresh_token:
+        return None
+    client_id, client_secret = get_oauth_credentials()
+    if not client_id or not client_secret:
+        return None
+    url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    }
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST"
     )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            if "access_token" in res_data:
+                creds["access_token"] = res_data["access_token"]
+                creds["expiry_date"] = int((time.time() + res_data.get("expires_in", 3600)) * 1000)
+                if "id_token" in res_data:
+                    creds["id_token"] = res_data["id_token"]
+                if "scope" in res_data:
+                    creds["scope"] = res_data["scope"]
+                if "token_type" in res_data:
+                    creds["token_type"] = res_data["token_type"]
+                try:
+                    temp_path = path.with_suffix(".tmp")
+                    temp_path.write_text(json.dumps(creds, indent=2))
+                    temp_path.replace(path)
+                except Exception:
+                    path.write_text(json.dumps(creds, indent=2))
+                return creds["access_token"]
+    except Exception:
+        pass
+    return None
 
-    if [[ -z "$gemini_bin" || ! -f "$gemini_bin" ]]; then
-        echo -e "${YELLOW}  Usage unavailable${NC}"
-        return
-    fi
+def post(url, token, body):
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
 
-    if ! output=$(GEMINI_BIN_REALPATH="$gemini_bin" node --input-type=module <<'NODE' 2>/dev/null
-import path from 'node:path';
-import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
+path = Path.home() / ".gemini" / "oauth_creds.json"
+if not path.exists():
+    sys.exit(1)
 
-function fmtReset(value) {
-  if (!value) {
-    return '';
-  }
+creds = json.loads(path.read_text())
+token = creds.get("access_token")
+if not token:
+    sys.exit(1)
 
-  try {
-    const resetAt = new Date(value);
-    if (Number.isNaN(resetAt.getTime())) {
-      return value;
-    }
+# Check if token is expired or expires in less than 5 minutes (300,000 ms)
+expiry = creds.get("expiry_date", 0)
+current_time_ms = int(time.time() * 1000)
+if current_time_ms >= (expiry - 300000):
+    new_token = refresh_access_token(path, creds)
+    if new_token:
+        token = new_token
 
-    const deltaMs = Math.max(0, resetAt.getTime() - Date.now());
-    const days = Math.floor(deltaMs / 86400000);
-    const hours = Math.floor((deltaMs % 86400000) / 3600000);
-    const pad = (n) => String(n).padStart(2, '0');
-    const stamp = `${resetAt.getFullYear()}-${pad(resetAt.getMonth() + 1)}-${pad(resetAt.getDate())} ${pad(resetAt.getHours())}:${pad(resetAt.getMinutes())}`;
-    return `${stamp} (${days}d ${hours}h)`;
-  } catch {
-    return value;
-  }
-}
+try:
+    try:
+        load = post(
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            token,
+            {
+                "cloudaicompanionProject": None,
+                "metadata": {
+                    "ideType": "IDE_UNSPECIFIED",
+                    "platform": "PLATFORM_UNSPECIFIED",
+                    "pluginType": "GEMINI",
+                },
+            },
+        )
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            new_token = refresh_access_token(path, creds)
+            if new_token:
+                token = new_token
+                load = post(
+                    "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+                    token,
+                    {
+                        "cloudaicompanionProject": None,
+                        "metadata": {
+                            "ideType": "IDE_UNSPECIFIED",
+                            "platform": "PLATFORM_UNSPECIFIED",
+                            "pluginType": "GEMINI",
+                        },
+                    },
+                )
+            else:
+                raise
+        else:
+            raise
 
-const geminiBin = process.env.GEMINI_BIN_REALPATH;
-if (!geminiBin) {
-  process.exit(1);
-}
+    project = load.get("cloudaicompanionProject")
+    if not project:
+        sys.exit(1)
 
-const bundleDir = path.dirname(geminiBin);
+    try:
+        quota = post(
+            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+            token,
+            {"project": project},
+        )
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            new_token = refresh_access_token(path, creds)
+            if new_token:
+                token = new_token
+                quota = post(
+                    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+                    token,
+                    {"project": project},
+                )
+            else:
+                raise
+        else:
+            raise
+except Exception:
+    sys.exit(1)
 
-// Gemini CLI v0.3x+ bundles all modules into core-<hash>.js files.
-// Older versions use separate source files under @google/gemini-cli-core.
-const coreRoot = path.join(path.dirname(bundleDir), 'node_modules', '@google', 'gemini-cli-core', 'dist', 'src');
-const legacyModuleUrl = (...parts) => pathToFileURL(path.join(...parts)).href;
-let getOauthClient, setupUser, CodeAssistServer, AuthType;
+buckets = quota.get("buckets") or []
+buckets_by_model = {b.get("modelId"): b for b in buckets if b.get("modelId")}
 
-const coreFiles = fs.readdirSync(bundleDir).filter(f => /^core-[A-Z0-9]+\.js$/.test(f));
-let loaded = false;
-for (const cf of coreFiles) {
-  try {
-    const m = await import(pathToFileURL(path.join(bundleDir, cf)).href);
-    if (m.getOauthClient && m.setupUser && m.CodeAssistServer && m.AuthType) {
-      ({ getOauthClient, setupUser, CodeAssistServer, AuthType } = m);
-      loaded = true;
-      break;
-    }
-  } catch {}
-}
-
-if (!loaded) {
-  // Fall back to legacy unbundled layout
-  [{ getOauthClient }, { setupUser }, { CodeAssistServer }, { AuthType }] = await Promise.all([
-    import(legacyModuleUrl(coreRoot, 'code_assist', 'oauth2.js')),
-    import(legacyModuleUrl(coreRoot, 'code_assist', 'setup.js')),
-    import(legacyModuleUrl(coreRoot, 'code_assist', 'server.js')),
-    import(legacyModuleUrl(coreRoot, 'core', 'contentGenerator.js')),
-  ]);
-}
-
-const config = {
-  getProxy() { return undefined; },
-  isBrowserLaunchSuppressed() { return false; },
-  getAcpMode() { return false; },
-  getValidationHandler() { return undefined; },
-};
-
-const client = await getOauthClient(AuthType.LOGIN_WITH_GOOGLE, config);
-
-async function loadUserData() {
-  try {
-    return await setupUser(client, config, {});
-  } catch (error) {
-    if (error instanceof TypeError && error.message.includes('getValidationHandler')) {
-      return await setupUser(client, config.getValidationHandler(), {});
-    }
-    throw error;
-  }
-}
-
-const userData = await loadUserData();
-const server = new CodeAssistServer(
-  client,
-  userData.projectId,
-  {},
-  '',
-  userData.userTier,
-  userData.userTierName,
-  userData.paidTier,
-  undefined,
-);
-const quota = await server.retrieveUserQuota({ project: userData.projectId });
-
-const buckets = [...(quota.buckets || [])].sort((a, b) => (a.modelId || '').localeCompare(b.modelId || ''));
-const flashRows = [];
-const proRows = [];
-const otherRows = [];
-
-for (const bucket of buckets) {
-  if (!bucket.modelId || bucket.remainingFraction == null) {
-    continue;
-  }
-
-  const fraction = Number(bucket.remainingFraction);
-  const percent = fraction <= 1 ? fraction * 100 : fraction;
-  const row = [bucket.modelId, percent, fmtReset(bucket.resetTime)];
-
-  if (bucket.modelId.includes('flash')) {
-    flashRows.push(row);
-  } else if (bucket.modelId.includes('pro')) {
-    proRows.push(row);
-  } else {
-    otherRows.push(row);
-  }
-}
-
-const rows = [];
-if (flashRows.length) {
-  rows.push(...flashRows);
-}
-if (flashRows.length && proRows.length) {
-  rows.push(['__BLANK__', '', '']);
-}
-if (proRows.length) {
-  rows.push(...proRows);
-}
-if ((flashRows.length || proRows.length) && otherRows.length) {
-  rows.push(['__BLANK__', '', '']);
-}
-if (otherRows.length) {
-  rows.push(...otherRows);
-}
-
-if (!rows.length) {
-  process.exit(1);
-}
-
-for (const [label, percent, resetAt] of rows) {
-  if (label === '__BLANK__') {
-    console.log(`${label}\t\t`);
-    continue;
-  }
-  console.log(`${label}\t${percent.toFixed(1)}\t${resetAt}`);
-}
-NODE
+for api_id, display_name in MODEL_MAP.items():
+    bucket = buckets_by_model.get(api_id)
+    if not bucket:
+        continue
+    
+    fraction = bucket.get("remainingFraction")
+    if fraction is None:
+        fraction = 1.0
+        
+    percent = float(fraction) * 100.0 if float(fraction) <= 1.0 else float(fraction)
+    reset_at = fmt_reset(bucket.get("resetTime"))
+    if not reset_at:
+        reset_at = "__EMPTY__"
+    print(f"{display_name}\t{percent:.1f}\t{reset_at}")
+PY
     ); then
         echo -e "${YELLOW}  Usage unavailable${NC}"
         return
@@ -1509,7 +1640,7 @@ do_usage() {
     usage_ran=false
     run_selected_usage claude usage_claude
     run_selected_usage codex usage_codex
-    run_selected_usage gemini usage_gemini
+    run_selected_usage antigravity usage_antigravity
     run_selected_usage copilot usage_copilot
 
     if ! $usage_ran; then
@@ -1538,7 +1669,7 @@ do_update() {
     run_selected_update claude check_claude
     run_selected_update gh_cli check_gh_cli
     run_selected_update copilot check_gh_copilot
-    run_selected_update gemini check_npm_package "Gemini CLI" "@google/gemini-cli" "gemini"
+    run_selected_update antigravity check_antigravity
     run_selected_update codex check_npm_package "Codex CLI" "@openai/codex" "codex"
     run_selected_update pi check_npm_package "Pi Coding Agent" "@earendil-works/pi-coding-agent" "pi"
     run_selected_update pi_vs_claude_code check_pi_vs_claude_code
@@ -1582,7 +1713,7 @@ shift 2>/dev/null || true
 case "$tool" in
     claude)  run_claude "$@" ;;
     codex)   exec codex --yolo "$@" ;;
-    gemini)  exec gemini --yolo "$@" ;;
+    antigravity|agy) exec agy --dangerously-skip-permissions "$@" ;;
     copilot) exec gh copilot --yolo "$@" ;;
     pi)      exec pi "$@" ;;
     hermes)  exec hermes --yolo "$@" ;;
@@ -1593,7 +1724,7 @@ case "$tool" in
         echo "Usage: ai <tool> [extra args]"
         echo "  ai claude   -> claude --dangerously-skip-permissions"
         echo "  ai codex    -> codex --yolo"
-        echo "  ai gemini   -> gemini --yolo"
+        echo "  ai antigravity -> agy --dangerously-skip-permissions"
         echo "  ai copilot  -> gh copilot --yolo"
         echo "  ai pi       -> pi"
         echo "  ai hermes   -> hermes --yolo"

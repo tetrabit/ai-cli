@@ -9,7 +9,7 @@ $UpdateTools = @(
     @{ Key = "claude"; Label = "Claude Code" },
     @{ Key = "gh_cli"; Label = "GitHub CLI (Copilot dependency)" },
     @{ Key = "copilot"; Label = "GitHub Copilot CLI" },
-    @{ Key = "gemini"; Label = "Gemini CLI" },
+    @{ Key = "antigravity"; Label = "Antigravity CLI" },
     @{ Key = "codex"; Label = "Codex CLI" },
     @{ Key = "pi"; Label = "Pi Coding Agent" },
     @{ Key = "pi_vs_claude_code"; Label = "Pi vs Claude Code" },
@@ -20,7 +20,7 @@ $UpdateTools = @(
 $UsageTools = @(
     @{ Key = "claude"; Label = "Claude Code" },
     @{ Key = "codex"; Label = "Codex CLI" },
-    @{ Key = "gemini"; Label = "Gemini CLI" },
+    @{ Key = "antigravity"; Label = "Antigravity CLI" },
     @{ Key = "copilot"; Label = "GitHub Copilot CLI" }
 )
 
@@ -59,7 +59,14 @@ function Get-AiCliConfig {
 
 function Test-AiCliEnabled($Category, $ToolName) {
     $config = Get-AiCliConfig
-    $key = Get-AiCliConfigKey $Category $ToolName
+    $configTool = $ToolName
+    if ($ToolName -eq "antigravity") {
+        $newKey = Get-AiCliConfigKey $Category "antigravity"
+        if (-not $config.ContainsKey($newKey)) {
+            $configTool = "gemini"
+        }
+    }
+    $key = Get-AiCliConfigKey $Category $configTool
     $value = if ($config.ContainsKey($key)) { "$($config[$key])".ToLowerInvariant() } else { "1" }
 
     switch ($value) {
@@ -163,6 +170,43 @@ function Update-GhCopilot {
         Write-Host "  Updated successfully" -ForegroundColor Yellow
     } else {
         Write-Host "  Already up to date" -ForegroundColor Green
+    }
+}
+
+function Update-Antigravity {
+    Write-Host "==> Checking Antigravity CLI..." -ForegroundColor Cyan
+    $oldVer = $null
+    if (Get-Command agy -ErrorAction SilentlyContinue) {
+        $oldVer = agy --version 2>$null | Select-Object -First 1
+    } else {
+        Write-Host "  Not installed, installing..." -ForegroundColor Yellow
+    }
+
+    try {
+        $installer = Invoke-RestMethod -Uri "https://antigravity.google/cli/install.ps1" -UseBasicParsing
+        $scriptBlock = [scriptblock]::Create($installer)
+        & $scriptBlock -NonInteractive
+    } catch {
+        Write-Host "  Installation failed: $_" -ForegroundColor Yellow
+        return
+    }
+
+    if (-not (Get-Command agy -ErrorAction SilentlyContinue)) {
+        Write-Host "  Installed, but agy is not on PATH yet. Restart your shell and try again." -ForegroundColor Yellow
+        return
+    }
+
+    $newVer = agy --version 2>$null | Select-Object -First 1
+    if (-not $oldVer) {
+        if ($newVer) {
+            Write-Host "  Installed ($newVer)" -ForegroundColor Green
+        } else {
+            Write-Host "  Installed" -ForegroundColor Green
+        }
+    } elseif ($oldVer -eq $newVer) {
+        Write-Host "  Already up to date ($newVer)" -ForegroundColor Green
+    } else {
+        Write-Host "  Updated $oldVer -> $newVer" -ForegroundColor Yellow
     }
 }
 
@@ -354,7 +398,7 @@ function Update-Hermes {
 switch ($Tool) {
     "claude"  { claude --dangerously-skip-permissions @ExtraArgs }
     "codex"   { codex --yolo @ExtraArgs }
-    "gemini"  { gemini --yolo @ExtraArgs }
+    { $_ -in @("antigravity", "agy") } { agy --dangerously-skip-permissions @ExtraArgs }
     "copilot" { gh copilot --yolo @ExtraArgs }
     "pi"      { pi @ExtraArgs }
     "hermes"  { hermes --yolo @ExtraArgs }
@@ -375,9 +419,9 @@ switch ($Tool) {
             Update-GhCopilot
             $ran = $true
         }
-        if (Test-AiCliEnabled "update" "gemini") {
+        if (Test-AiCliEnabled "update" "antigravity") {
             if ($ran) { Write-Host "" }
-            Update-NpmPackage "Gemini CLI" "@google/gemini-cli"
+            Update-Antigravity
             $ran = $true
         }
         if (Test-AiCliEnabled "update" "codex") {
@@ -412,16 +456,325 @@ switch ($Tool) {
             Write-Host "No update tools selected. Run 'ai setup' to choose tools." -ForegroundColor Yellow
         }
     }
+    "usage" {
+        $ran = $false
+        if (Test-AiCliEnabled "usage" "claude") {
+            if ($ran) { Write-Host "" }
+            Write-Host "==> Claude Code..." -ForegroundColor Cyan
+            Write-Host "  Usage check is not fully supported on Windows. Please run Claude Code directly to check remaining usage." -ForegroundColor Yellow
+            $ran = $true
+        }
+        if (Test-AiCliEnabled "usage" "codex") {
+            if ($ran) { Write-Host "" }
+            Write-Host "==> Codex CLI..." -ForegroundColor Cyan
+            Write-Host "  Usage check is not fully supported on Windows. Please run Codex CLI directly to check remaining usage." -ForegroundColor Yellow
+            $ran = $true
+        }
+        if (Test-AiCliEnabled "usage" "antigravity") {
+            if ($ran) { Write-Host "" }
+            Write-Host "==> Antigravity CLI..." -ForegroundColor Cyan
+            
+            $pythonScript = @'
+import json
+import sys
+import time
+import urllib.parse
+import urllib.request
+import urllib.error
+import subprocess
+import os
+import re
+from datetime import datetime
+from pathlib import Path
+
+MODEL_MAP = {
+    "gemini-2.5-flash": "Gemini 3.5 Flash (High)",
+    "gemini-2.5-flash-lite": "Gemini 3.5 Flash (Medium)",
+    "gemini-2.5-pro": "Gemini 3.1 Pro (High)",
+    "gemini-3-flash-preview": "Gemini 3.1 Pro (Low)",
+    "gemini-3-pro-preview": "Claude Sonnet 4.6 (Thinking)",
+    "gemini-3.1-flash-lite": "Claude Opus 4.6 (Thinking)",
+    "gemini-3.1-pro-preview": "GPT-OSS 120B (Medium)"
+}
+
+def fmt_reset(value):
+    if not value:
+        return ""
+    try:
+        value = value.replace("Z", "+00:00")
+        reset_at = datetime.fromisoformat(value).astimezone()
+        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
+        days = delta_seconds // 86400
+        hours = (delta_seconds % 86400) // 3600
+        minutes = (delta_seconds % 3600) // 60
+        if days:
+            delta_text = f"{days}d {hours}h"
+        elif hours:
+            delta_text = f"{hours}h {minutes}m"
+        else:
+            delta_text = f"{minutes}m"
+        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({delta_text})"
+    except Exception:
+        return value
+
+def render_usage_bar(percent):
+    segments = 20
+    ratio = max(0.0, min(1.0, percent / 100.0))
+    filled = min(segments, max(0, int(round(ratio * segments))))
+    return "[" + "#" * filled + "-" * (segments - filled) + "]"
+
+def print_usage_row(label, percent, reset_at):
+    bar = render_usage_bar(percent)
+    reset_str = f"  resets {reset_at}" if reset_at and reset_at != "__EMPTY__" else ""
+    return f"  {label:<24} {bar} {percent:6.1f}% left{reset_str}"
+
+def get_oauth_credentials():
+    paths = []
+    try:
+        res = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, shell=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            paths.append(Path(res.stdout.strip()))
+    except Exception:
+        pass
+    
+    paths.append(Path.home() / ".npm-global" / "lib" / "node_modules")
+    paths.append(Path("/usr/local/lib/node_modules"))
+    paths.append(Path("/usr/lib/node_modules"))
+    
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        paths.append(Path(appdata) / "npm" / "node_modules")
+    paths.append(Path.home() / "AppData" / "Roaming" / "npm" / "node_modules")
+    
+    program_files = os.environ.get("ProgramFiles")
+    if program_files:
+        paths.append(Path(program_files) / "nodejs" / "node_modules")
+
+    seen = set()
+    search_dirs = []
+    for p in paths:
+        try:
+            resolved = p.resolve()
+            if resolved not in seen and resolved.exists():
+                seen.add(resolved)
+                search_dirs.append(resolved)
+        except Exception:
+            pass
+
+    client_id_pat = re.compile(r'OAUTH_CLIENT_ID\s*=\s*"([^"]+)"')
+    client_secret_pat = re.compile(r'OAUTH_CLIENT_SECRET\s*=\s*"([^"]+)"')
+
+    for s_dir in search_dirs:
+        bundle_dir = s_dir / "@google" / "gemini-cli" / "bundle"
+        if bundle_dir.exists():
+            for file_path in bundle_dir.glob("chunk-*.js"):
+                try:
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    id_match = client_id_pat.search(content)
+                    secret_match = client_secret_pat.search(content)
+                    if id_match and secret_match:
+                        return id_match.group(1), secret_match.group(1)
+                except Exception:
+                    pass
+    return None, None
+
+def refresh_access_token(path, creds):
+    refresh_token = creds.get("refresh_token")
+    if not refresh_token:
+        return None
+    client_id, client_secret = get_oauth_credentials()
+    if not client_id or not client_secret:
+        return None
+    url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "refresh_token": refresh_token,
+    }
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            if "access_token" in res_data:
+                creds["access_token"] = res_data["access_token"]
+                creds["expiry_date"] = int((time.time() + res_data.get("expires_in", 3600)) * 1000)
+                if "id_token" in res_data:
+                    creds["id_token"] = res_data["id_token"]
+                if "scope" in res_data:
+                    creds["scope"] = res_data["scope"]
+                if "token_type" in res_data:
+                    creds["token_type"] = res_data["token_type"]
+                try:
+                    temp_path = path.with_suffix(".tmp")
+                    temp_path.write_text(json.dumps(creds, indent=2))
+                    temp_path.replace(path)
+                except Exception:
+                    path.write_text(json.dumps(creds, indent=2))
+                return creds["access_token"]
+    except Exception:
+        pass
+    return None
+
+def post(url, token, body):
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+path = Path.home() / ".gemini" / "oauth_creds.json"
+if not path.exists():
+    sys.exit(1)
+
+creds = json.loads(path.read_text())
+token = creds.get("access_token")
+if not token:
+    sys.exit(1)
+
+# Check if token is expired or expires in less than 5 minutes (300,000 ms)
+expiry = creds.get("expiry_date", 0)
+current_time_ms = int(time.time() * 1000)
+if current_time_ms >= (expiry - 300000):
+    new_token = refresh_access_token(path, creds)
+    if new_token:
+        token = new_token
+
+try:
+    try:
+        load = post(
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            token,
+            {
+                "cloudaicompanionProject": None,
+                "metadata": {
+                    "ideType": "IDE_UNSPECIFIED",
+                    "platform": "PLATFORM_UNSPECIFIED",
+                    "pluginType": "GEMINI",
+                },
+            },
+        )
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            new_token = refresh_access_token(path, creds)
+            if new_token:
+                token = new_token
+                load = post(
+                    "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+                    token,
+                    {
+                        "cloudaicompanionProject": None,
+                        "metadata": {
+                            "ideType": "IDE_UNSPECIFIED",
+                            "platform": "PLATFORM_UNSPECIFIED",
+                            "pluginType": "GEMINI",
+                        },
+                    },
+                )
+            else:
+                raise
+        else:
+            raise
+
+    project = load.get("cloudaicompanionProject")
+    if not project:
+        sys.exit(1)
+
+    try:
+        quota = post(
+            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+            token,
+            {"project": project},
+        )
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            new_token = refresh_access_token(path, creds)
+            if new_token:
+                token = new_token
+                quota = post(
+                    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+                    token,
+                    {"project": project},
+                )
+            else:
+                raise
+        else:
+            raise
+except Exception:
+    sys.exit(1)
+
+buckets = quota.get("buckets") or []
+buckets_by_model = {b.get("modelId"): b for b in buckets if b.get("modelId")}
+
+for api_id, display_name in MODEL_MAP.items():
+    bucket = buckets_by_model.get(api_id)
+    if not bucket:
+        continue
+    
+    fraction = bucket.get("remainingFraction")
+    if fraction is None:
+        fraction = 1.0
+        
+    percent = float(fraction) * 100.0 if float(fraction) <= 1.0 else float(fraction)
+    reset_at = fmt_reset(bucket.get("resetTime"))
+    if not reset_at:
+        reset_at = "__EMPTY__"
+    print(print_usage_row(display_name, percent, reset_at))
+'@
+
+            $output = $pythonScript | python3 2>$null
+            if ($LASTEXITCODE -eq 0 -and $output) {
+                foreach ($line in $output) {
+                    Write-Host $line
+                }
+            } else {
+                if (Get-Command agy -ErrorAction SilentlyContinue) {
+                    Write-Host "  To check remaining usage and rate limits, launch the interactive agent by running:"
+                    Write-Host "    ai antigravity" -ForegroundColor Green
+                    Write-Host "  and type the slash command: " -NoNewline
+                    Write-Host "/usage" -ForegroundColor Yellow
+                } else {
+                    Write-Host "  Usage unavailable (Antigravity CLI not installed)" -ForegroundColor Yellow
+                }
+            }
+            $ran = $true
+        }
+        if (Test-AiCliEnabled "usage" "copilot") {
+            if ($ran) { Write-Host "" }
+            Write-Host "==> GitHub Copilot CLI..." -ForegroundColor Cyan
+            Write-Host "  Usage check is not fully supported on Windows. Please run GitHub Copilot CLI directly to check remaining usage." -ForegroundColor Yellow
+            $ran = $true
+        }
+        if ($ran) {
+            Write-Host ""
+            Write-Host "Usage check complete." -ForegroundColor Green
+        } else {
+            Write-Host "No usage providers selected. Run 'ai setup' to choose providers." -ForegroundColor Yellow
+        }
+    }
     "setup" { Invoke-AiCliSetup }
     default {
         Write-Host "Usage: ai <tool> [extra args]"
         Write-Host "  ai claude   -> claude --dangerously-skip-permissions"
         Write-Host "  ai codex    -> codex --yolo"
-        Write-Host "  ai gemini   -> gemini --yolo"
+        Write-Host "  ai antigravity -> agy --dangerously-skip-permissions"
         Write-Host "  ai copilot  -> gh copilot --yolo"
         Write-Host "  ai pi       -> pi"
         Write-Host "  ai hermes   -> hermes --yolo"
         Write-Host "  ai update   -> update all AI tools"
+        Write-Host "  ai usage    -> show remaining usage by provider"
         Write-Host "  ai setup    -> choose tools for update and usage checks"
     }
 }

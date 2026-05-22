@@ -38,7 +38,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tetrabit/ai-cli/main/a
 |------|---------------|--------------|
 | Claude Code | `ai claude` | `claude --dangerously-skip-permissions` |
 | OpenAI Codex | `ai codex` | `codex --yolo` |
-| Google Gemini | `ai gemini` | `gemini --yolo` |
+| Google Antigravity | `ai antigravity` | `agy --dangerously-skip-permissions` |
 | GitHub Copilot | `ai copilot` | `gh copilot --yolo` |
 | Pi Coding Agent | `ai pi` | `pi` |
 | Hermes Agent | `ai hermes` | `hermes --yolo` |
@@ -52,7 +52,7 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks each tool for updates before installing. If Gemini CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Gemini, Codex, and Pi use npm; Hermes uses the official Hermes installer. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
+Checks each tool for updates before installing. If Antigravity CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Codex and Pi use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
 
 `ai update` also installs or updates the Pi vs Claude Code harness from `https://github.com/disler/pi-vs-claude-code`. The checkout lives at `${XDG_DATA_HOME:-~/.local/share}/ai-cli/pi-vs-claude-code` on Linux/macOS, `%LOCALAPPDATA%\ai-cli\pi-vs-claude-code` on Windows, or `AI_CLI_PI_VS_CLAUDE_CODE_DIR` when set. Bun is required to install its dependencies, and `just` is required to use the bundled recipes.
 
@@ -61,7 +61,7 @@ Checks each tool for updates before installing. If Gemini CLI, Codex CLI, Pi Cod
 | Claude Code | `winget upgrade` | `npm install` when missing, otherwise `claude update` | `npm install` when missing, otherwise `claude update` |
 | GitHub CLI | `winget upgrade` | `apt` / `dnf` | `brew upgrade gh` |
 | GitHub Copilot CLI | `gh copilot update` | `gh copilot update` | `gh copilot update` |
-| Gemini CLI | npm version check | npm version check | npm version check |
+| Antigravity CLI | official installer | official installer | official installer |
 | Codex CLI | npm version check | npm version check | npm version check |
 | Pi Coding Agent | npm version check | npm version check | npm version check |
 | Pi vs Claude Code | git clone/pull + `bun install` | git clone/pull + `bun install` | git clone/pull + `bun install` |
@@ -94,8 +94,8 @@ Example output:
 ==> Checking GitHub Copilot CLI...
   Already up to date (1.0.3)
 
-==> Checking Gemini CLI...
-  Already up to date (0.32.1)
+==> Checking Antigravity CLI...
+  Already up to date (1.0.0)
 
 ==> Checking Codex CLI...
   Already up to date (0.113.0)
@@ -116,12 +116,12 @@ All AI tools checked.
 ai usage
 ```
 
-Shows remaining usage as percentage bars for the selected supported providers in `ai.sh`:
+Shows remaining usage as percentage bars or instruction guidelines for the selected supported providers in `ai.sh` and `ai.ps1`:
 
-- Claude Code: 5-hour and 7-day limits
-- Codex CLI: 5-hour and 7-day limits
-- Gemini CLI: model quota buckets returned by Gemini Code Assist
-- GitHub Copilot CLI: premium request quota
+- **Claude Code:** 5-hour and 7-day limits (Linux/macOS)
+- **Codex CLI:** 5-hour and 7-day limits (Linux/macOS)
+- **Antigravity CLI:** Live model quota buckets returned by Google Cloud Code/Antigravity API, with seamless OAuth token auto-refresh (Linux/macOS/Windows)
+- **GitHub Copilot CLI:** Premium request quota (Linux/macOS)
 
 Example output:
 
@@ -134,8 +134,9 @@ Example output:
   5h limit           [##############------]   68.0% left  resets 2026-03-12 16:19
   7d limit           [###########---------]   55.0% left  resets 2026-03-18 11:15
 
-==> Gemini CLI...
-  gemini-3-flash-preview [##################--]   91.9% left  resets 2026-03-12 17:51
+==> Antigravity CLI...
+  Gemini 2.5 Flash         [###################-]   94.5% left  resets 2026-05-23 17:19
+  Gemini 2.5 Pro           [####################]  100.0% left  resets 2026-05-23 18:16
 
 ==> GitHub Copilot CLI...
   premium interactions [############--------]   60.6% left  resets 2026-03-12 16:29
