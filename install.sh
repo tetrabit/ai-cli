@@ -71,6 +71,245 @@ windows_source_path() {
     fi
 }
 
+prepend_path_dir() {
+    local dir="$1"
+    local item new_path old_ifs
+
+    [[ -d "$dir" ]] || return 0
+    new_path="$dir"
+    old_ifs="$IFS"
+    IFS=:
+    for item in ${PATH:-}; do
+        [[ -n "$item" && "$item" != "$dir" ]] || continue
+        new_path="${new_path}:$item"
+    done
+    IFS="$old_ifs"
+    PATH="$new_path"
+}
+
+prompt_for_sudo() {
+    local action="$1"
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "sudo is required to $action, but sudo was not found."
+        return 1
+    fi
+
+    echo "sudo is required to $action."
+    if [[ ! -t 0 ]]; then
+        echo "Run this installer from an interactive terminal to enter your sudo password."
+        return 1
+    fi
+
+    sudo -v
+}
+
+package_manager() {
+    if command -v pacman >/dev/null 2>&1; then
+        printf 'pacman\n'
+    elif command -v apt-get >/dev/null 2>&1; then
+        printf 'apt\n'
+    elif command -v dnf >/dev/null 2>&1; then
+        printf 'dnf\n'
+    elif command -v brew >/dev/null 2>&1; then
+        printf 'brew\n'
+    else
+        printf 'none\n'
+    fi
+}
+
+packages_for_dependency() {
+    local manager="$1"
+    local dependency="$2"
+
+    case "$manager:$dependency" in
+        pacman:curl) printf 'curl\n' ;;
+        pacman:git) printf 'git\n' ;;
+        pacman:python3) printf 'python\n' ;;
+        pacman:npm) printf 'nodejs\nnpm\n' ;;
+        pacman:gh) printf 'github-cli\n' ;;
+        pacman:unzip) printf 'unzip\n' ;;
+        pacman:just) printf 'just\n' ;;
+        apt:curl) printf 'curl\n' ;;
+        apt:git) printf 'git\n' ;;
+        apt:python3) printf 'python3\n' ;;
+        apt:npm) printf 'nodejs\nnpm\n' ;;
+        apt:gh) printf 'gh\n' ;;
+        apt:unzip) printf 'unzip\n' ;;
+        apt:just) printf 'just\n' ;;
+        dnf:curl) printf 'curl\n' ;;
+        dnf:git) printf 'git\n' ;;
+        dnf:python3) printf 'python3\n' ;;
+        dnf:npm) printf 'nodejs\nnpm\n' ;;
+        dnf:gh) printf 'gh\n' ;;
+        dnf:unzip) printf 'unzip\n' ;;
+        dnf:just) printf 'just\n' ;;
+        brew:curl) printf 'curl\n' ;;
+        brew:git) printf 'git\n' ;;
+        brew:python3) printf 'python\n' ;;
+        brew:npm) printf 'node\n' ;;
+        brew:gh) printf 'gh\n' ;;
+        brew:unzip) printf 'unzip\n' ;;
+        brew:just) printf 'just\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+install_packages() {
+    local manager="$1"
+    shift
+    local -a packages=("$@")
+
+    [[ ${#packages[@]} -gt 0 ]] || return 0
+
+    case "$manager" in
+        pacman)
+            prompt_for_sudo "install ${packages[*]}" || return 1
+            sudo pacman -Sy --noconfirm --needed "${packages[@]}" >/dev/null
+            ;;
+        apt)
+            prompt_for_sudo "install ${packages[*]}" || return 1
+            sudo apt-get update -qq >/dev/null
+            sudo apt-get install -y -qq "${packages[@]}" >/dev/null
+            ;;
+        dnf)
+            prompt_for_sudo "install ${packages[*]}" || return 1
+            sudo dnf install -y -q "${packages[@]}" >/dev/null
+            ;;
+        brew)
+            brew install "${packages[@]}" >/dev/null
+            ;;
+        *)
+            echo "No supported package manager found for ${packages[*]}."
+            return 1
+            ;;
+    esac
+}
+
+ensure_package_dependency() {
+    local dependency="$1"
+    local display_name="$2"
+    local manager
+    local package packages_text
+    local -a packages=()
+
+    manager="$(package_manager)"
+    if [[ "$manager" == "apt" && "$dependency" == "gh" ]]; then
+        ensure_command_dependency curl curl "curl" || return 1
+        if [[ ! -f /etc/apt/sources.list.d/github-cli.list || ! -f /usr/share/keyrings/githubcli-archive-keyring.gpg ]]; then
+            prompt_for_sudo "configure the GitHub CLI apt repository" || return 1
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+                | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null 2>&1
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+                | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+        fi
+    fi
+
+    if ! packages_text=$(packages_for_dependency "$manager" "$dependency"); then
+        echo "Could not map $display_name to a package for this system."
+        return 1
+    fi
+    while IFS= read -r package; do
+        [[ -n "$package" ]] && packages+=("$package")
+    done <<< "$packages_text"
+
+    echo "$display_name is missing, installing..."
+    install_packages "$manager" "${packages[@]}"
+}
+
+ensure_command_dependency() {
+    local command_name="$1"
+    local dependency="$2"
+    local display_name="$3"
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    ensure_package_dependency "$dependency" "$display_name" || return 1
+    command -v "$command_name" >/dev/null 2>&1
+}
+
+ensure_bun_dependency() {
+    prepend_path_dir "$HOME/.bun/bin"
+    if command -v bun >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Bun is missing, installing..."
+    ensure_command_dependency curl curl "curl" || return 1
+    if [[ "$(uname -s)" == Linux* ]]; then
+        ensure_command_dependency unzip unzip "unzip" || return 1
+    fi
+
+    curl -fsSL https://bun.com/install | bash >/dev/null
+    prepend_path_dir "$HOME/.bun/bin"
+    command -v bun >/dev/null 2>&1
+}
+
+ensure_just_dependency() {
+    if command -v just >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ "${AI_CLI_JUST_CHECKED:-0}" == "1" ]]; then
+        return 0
+    fi
+    AI_CLI_JUST_CHECKED=1
+
+    ensure_package_dependency just "just" || {
+        echo "just is still missing; Pi vs Claude Code recipes will not run until just is installed."
+        return 0
+    }
+
+    if ! command -v just >/dev/null 2>&1; then
+        echo "just is still missing; Pi vs Claude Code recipes will not run until just is installed."
+    fi
+}
+
+ensure_unix_dependencies() {
+    echo "Checking ai-cli dependencies..."
+    ensure_command_dependency curl curl "curl"
+    ensure_command_dependency git git "Git"
+    ensure_command_dependency python3 python3 "Python 3"
+    ensure_command_dependency npm npm "Node.js/npm"
+    ensure_command_dependency gh gh "GitHub CLI"
+    ensure_bun_dependency
+    ensure_just_dependency
+    echo "Dependencies ready."
+}
+
+ensure_windows_command_dependency() {
+    local command_name="$1"
+    local package_id="$2"
+    local display_name="$3"
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if ! command -v winget >/dev/null 2>&1; then
+        echo "$display_name is missing and winget was not found."
+        return 1
+    fi
+
+    echo "$display_name is missing, installing..."
+    winget install --id "$package_id" --exact --silent --accept-package-agreements --accept-source-agreements
+    command -v "$command_name" >/dev/null 2>&1
+}
+
+ensure_windows_dependencies() {
+    echo "Checking ai-cli dependencies..."
+    ensure_windows_command_dependency git Git.Git "Git"
+    ensure_windows_command_dependency node OpenJS.NodeJS.LTS "Node.js"
+    ensure_windows_command_dependency npm OpenJS.NodeJS.LTS "npm"
+    ensure_windows_command_dependency gh GitHub.cli "GitHub CLI"
+    ensure_windows_command_dependency bun Oven-sh.Bun "Bun"
+    ensure_windows_command_dependency just Casey.Just "just" || true
+    echo "Dependencies ready."
+}
+
 install_file() {
     local source="$1"
     local dest="$2"
@@ -82,6 +321,7 @@ install_file() {
         if [[ -w "$(dirname "$dest_dir")" ]]; then
             mkdir -p "$dest_dir"
         else
+            prompt_for_sudo "create $dest_dir" || return 1
             sudo mkdir -p "$dest_dir"
         fi
     fi
@@ -91,6 +331,7 @@ install_file() {
         if [[ -w "$dest_dir" ]]; then
             install -m "$mode" "$source" "$dest"
         else
+            prompt_for_sudo "install $dest" || return 1
             sudo install -m "$mode" "$source" "$dest"
         fi
         return
@@ -105,6 +346,7 @@ install_file() {
     if [[ -w "$dest_dir" ]]; then
         install -m "$mode" "$temp_file" "$dest"
     else
+        prompt_for_sudo "install $dest" || return 1
         sudo install -m "$mode" "$temp_file" "$dest"
     fi
 }
@@ -129,6 +371,7 @@ case "$(uname -s)" in
 
         SOURCE_PATH="$(linux_source_path)"
         echo "Detected: $(uname -s)"
+        ensure_unix_dependencies
         echo "Installing ai -> $INSTALL_PATH"
         install_file "$SOURCE_PATH" "$INSTALL_PATH" 0755
 
@@ -152,6 +395,7 @@ case "$(uname -s)" in
         SOURCE_PATH="$(windows_source_path)"
         TARGET_PATH="$(cygpath "$INSTALL_DIR/ai.ps1" 2>/dev/null || echo "/c/tools/ai.ps1")"
         echo "Detected: Windows"
+        ensure_windows_dependencies
         echo "Installing ai.ps1 -> $INSTALL_DIR\\ai.ps1"
 
         mkdir -p "$(cygpath "$INSTALL_DIR" 2>/dev/null || echo "/c/tools")"

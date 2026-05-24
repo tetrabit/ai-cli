@@ -52,9 +52,17 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks each tool for updates before installing. If Antigravity CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Codex and Pi use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. For npm tools, `ai update` prefers your configured user npm prefix when it lives under your home directory (for example `~/.npm-global`) and otherwise falls back to `~/.local`. It moves that prefix's `bin` directory to the front of the current update session, keeps the ai-cli managed shell PATH block pointed at the chosen prefix, and removes duplicate user-prefix installs of the same package that could shadow the upgraded binary.
+Checks dependencies and each selected tool before installing updates. Missing dependencies are installed first when ai-cli knows how to install them for the current platform, including Bun for Pi vs Claude Code. If Antigravity CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Codex and Pi use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. For npm tools, `ai update` prefers your configured user npm prefix when it lives under your home directory (for example `~/.npm-global`) and otherwise falls back to `~/.local`. It moves that prefix's `bin` directory to the front of the current update session, keeps the ai-cli managed shell PATH block pointed at the chosen prefix, and removes duplicate user-prefix installs of the same package that could shadow the upgraded binary.
 
 `ai update` also installs or updates the Pi vs Claude Code harness from `https://github.com/disler/pi-vs-claude-code`. The checkout lives at `${XDG_DATA_HOME:-~/.local/share}/ai-cli/pi-vs-claude-code` on Linux/macOS, `%LOCALAPPDATA%\ai-cli\pi-vs-claude-code` on Windows, or `AI_CLI_PI_VS_CLAUDE_CODE_DIR` when set. Bun is required to install its dependencies, and `just` is required to use the bundled recipes.
+
+## Repair Install Issues
+
+```bash
+ai doctor
+```
+
+Checks for common install breakage and fixes what it can. On Linux/macOS, `ai doctor` replaces a stale `ai` launcher on PATH with the script currently running, prompting for `sudo` when that launcher is in a protected location such as `/usr/local/bin`. From a local checkout, run `./ai.sh doctor` once if the installed `ai` command is too old to know about `doctor`. It also checks missing dependencies and removes known legacy npm package handoffs, such as the old Pi Coding Agent package that can leave a `pi` binary behind and block the current package from installing.
 
 | Tool | Windows | Linux | macOS |
 |------|---------|-------|-------|
@@ -144,6 +152,6 @@ Example output:
 
 ## Prerequisites
 
-- **Windows:** [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/), [Bun](https://bun.sh/) and [just](https://just.systems/) for Pi vs Claude Code
-- **Linux:** [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/), [Bun](https://bun.sh/) and [just](https://just.systems/) for Pi vs Claude Code
-- **macOS:** [Homebrew](https://brew.sh/), [Node.js](https://nodejs.org/), [GitHub CLI](https://cli.github.com/), [Bun](https://bun.sh/) and [just](https://just.systems/) for Pi vs Claude Code
+- **Windows:** [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) is used to install missing dependencies.
+- **Linux:** `apt`, `dnf`, or `pacman` is used to install missing system dependencies; Bun is installed with the [official Bun installer](https://bun.com/docs/installation).
+- **macOS:** [Homebrew](https://brew.sh/) is used to install missing system dependencies; Bun is installed with the [official Bun installer](https://bun.com/docs/installation).

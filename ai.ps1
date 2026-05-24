@@ -210,18 +210,123 @@ function Update-Antigravity {
     }
 }
 
-function Update-NpmPackage($DisplayName, $Package) {
+function Remove-LegacyNpmPackages($DisplayName, $Package, $Binary, [string[]]$LegacyPackages) {
+    foreach ($legacyPackage in $LegacyPackages) {
+        if (-not $legacyPackage -or $legacyPackage -eq $Package) { continue }
+        $legacy = (npm list -g $legacyPackage --depth=0 --json 2>$null | ConvertFrom-Json).dependencies.$legacyPackage.version
+        if (-not $legacy) { continue }
+
+        $suffix = if ($Binary) { " to free $Binary" } else { "" }
+        Write-Host "  Removing legacy $DisplayName $legacy from $legacyPackage$suffix." -ForegroundColor Yellow
+        npm uninstall -g $legacyPackage --loglevel error
+    }
+}
+
+function Update-NpmPackage($DisplayName, $Package, $Binary = $null, [string[]]$LegacyPackages = @()) {
     Write-Host "==> Checking $DisplayName..." -ForegroundColor Cyan
     $current = (npm list -g $Package --depth=0 --json 2>$null | ConvertFrom-Json).dependencies.$Package.version
     $latest  = (npm view $Package version 2>$null).Trim()
     if (-not $current) {
         Write-Host "  Not installed, installing $latest..." -ForegroundColor Yellow
+        Remove-LegacyNpmPackages $DisplayName $Package $Binary $LegacyPackages
         npm install -g "${Package}@latest" --loglevel error
     } elseif ($current -eq $latest) {
         Write-Host "  Already up to date ($current)" -ForegroundColor Green
+        Remove-LegacyNpmPackages $DisplayName $Package $Binary $LegacyPackages
     } else {
         Write-Host "  Updating $current -> $latest..." -ForegroundColor Yellow
+        Remove-LegacyNpmPackages $DisplayName $Package $Binary $LegacyPackages
         npm install -g "${Package}@latest" --loglevel error
+    }
+}
+
+function Install-WingetDependency($DisplayName, $PackageId) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "  $DisplayName is missing and winget was not found." -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "  $DisplayName is missing, installing..." -ForegroundColor Yellow
+    winget install --id $PackageId --exact --silent --accept-package-agreements --accept-source-agreements | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-CommandDependency($CommandName, $DisplayName, $PackageId) {
+    if (Get-Command $CommandName -ErrorAction SilentlyContinue) { return $true }
+    if (-not (Install-WingetDependency $DisplayName $PackageId)) { return $false }
+    return [bool](Get-Command $CommandName -ErrorAction SilentlyContinue)
+}
+
+function Ensure-BunDependency {
+    $bunBin = Join-Path $HOME ".bun\bin"
+    if ((Test-Path $bunBin) -and (($env:PATH -split [IO.Path]::PathSeparator) -notcontains $bunBin)) {
+        $env:PATH = "$bunBin$([IO.Path]::PathSeparator)$env:PATH"
+    }
+    if (Get-Command bun -ErrorAction SilentlyContinue) { return $true }
+    if (-not (Install-WingetDependency "Bun" "Oven-sh.Bun")) { return $false }
+    return [bool](Get-Command bun -ErrorAction SilentlyContinue)
+}
+
+function Ensure-JustDependency {
+    if (Get-Command just -ErrorAction SilentlyContinue) { return $true }
+    if ($script:AiCliJustChecked) { return $true }
+    $script:AiCliJustChecked = $true
+    if (-not (Install-WingetDependency "just" "Casey.Just")) {
+        Write-Host "  just is still missing; Pi vs Claude Code dependencies can install, but recipes will not run until just is installed." -ForegroundColor Yellow
+        return $true
+    }
+    if (-not (Get-Command just -ErrorAction SilentlyContinue)) {
+        Write-Host "  just is still missing; Pi vs Claude Code dependencies can install, but recipes will not run until just is installed." -ForegroundColor Yellow
+    }
+    return $true
+}
+
+function Ensure-UpdateDependencies {
+    Write-Host "==> Checking ai-cli dependencies..." -ForegroundColor Cyan
+    $ok = $true
+
+    if ((Test-AiCliEnabled "update" "codex") -or (Test-AiCliEnabled "update" "pi")) {
+        if (-not (Ensure-CommandDependency "npm" "Node.js/npm" "OpenJS.NodeJS.LTS")) { $ok = $false }
+    }
+    if ((Test-AiCliEnabled "update" "gh_cli") -or (Test-AiCliEnabled "update" "copilot")) {
+        if (-not (Ensure-CommandDependency "gh" "GitHub CLI" "GitHub.cli")) { $ok = $false }
+    }
+    if ((Test-AiCliEnabled "update" "pi_vs_claude_code") -or (Test-AiCliEnabled "update" "hermes")) {
+        if (-not (Ensure-CommandDependency "git" "Git" "Git.Git")) { $ok = $false }
+    }
+    if (Test-AiCliEnabled "update" "pi_vs_claude_code") {
+        if (-not (Ensure-BunDependency)) { $ok = $false }
+        Ensure-JustDependency | Out-Null
+    }
+
+    if ($ok) {
+        Write-Host "  Dependencies ready." -ForegroundColor Green
+    }
+    return $ok
+}
+
+function Invoke-AiCliDoctor {
+    Write-Host "==> Checking ai-cli launcher..." -ForegroundColor Cyan
+    Write-Host "  Windows installs do not use sudo. Re-run the installer from an elevated shell if ai.ps1 needs repair." -ForegroundColor Yellow
+
+    Write-Host ""
+    $dependenciesOk = Ensure-UpdateDependencies
+
+    Write-Host ""
+    Write-Host "==> Checking npm package handoffs..." -ForegroundColor Cyan
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        Remove-LegacyNpmPackages "Pi Coding Agent" "@earendil-works/pi-coding-agent" "pi" @("@mariozechner/pi-coding-agent")
+        Write-Host "  npm package handoffs checked." -ForegroundColor Green
+    } else {
+        Write-Host "  npm not found; skipping npm package handoff checks." -ForegroundColor Yellow
+    }
+
+    Write-Host ""
+    if ($dependenciesOk) {
+        Write-Host "Doctor checks complete." -ForegroundColor Green
+    } else {
+        Write-Host "Doctor found issues it could not fix." -ForegroundColor Yellow
+        exit 1
     }
 }
 
@@ -243,7 +348,7 @@ function Update-PiVsClaudeCode {
     $repoDir = Get-PiVsClaudeCodeDir
     $gitDir = Join-Path $repoDir ".git"
 
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    if (-not (Ensure-CommandDependency "git" "Git" "Git.Git")) {
         Write-Host "  Git is required to install this repo." -ForegroundColor Yellow
         return
     }
@@ -279,8 +384,8 @@ function Update-PiVsClaudeCode {
         Write-Host "  Cloned to $repoDir" -ForegroundColor Green
     }
 
-    if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
-        Write-Host "  Bun is required for dependencies. Install Bun, then rerun 'ai update'." -ForegroundColor Yellow
+    if (-not (Ensure-BunDependency)) {
+        Write-Host "  Bun is required for dependencies." -ForegroundColor Yellow
         return
     }
 
@@ -290,6 +395,7 @@ function Update-PiVsClaudeCode {
         return
     }
 
+    Ensure-JustDependency | Out-Null
     if (Get-Command just -ErrorAction SilentlyContinue) {
         Write-Host "  Dependencies installed. Run recipes from $repoDir with 'just'." -ForegroundColor Green
     } else {
@@ -345,6 +451,8 @@ function Install-Hermes {
 
 function Update-Hermes {
     Write-Host "==> Checking Hermes Agent..." -ForegroundColor Cyan
+    if (-not (Ensure-CommandDependency "git" "Git" "Git.Git")) { return }
+
     if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {
         Write-Host "  Not installed, installing..." -ForegroundColor Yellow
         if (-not (Install-Hermes)) {
@@ -366,6 +474,8 @@ function Update-Hermes {
     }
 
     $current = Get-HermesVersion
+    $startVer = $current
+    $updated = $false
 
     $hadCi = Test-Path Env:CI
     $previousCi = $env:CI
@@ -374,7 +484,14 @@ function Update-Hermes {
         # print cosmetic demos directly to the terminal. CI=true suppresses
         # those demos without disabling required install scripts.
         if (-not $env:CI) { $env:CI = "true" }
-        hermes update >$null 2>&1
+        for ($i = 0; $i -lt 8; $i++) {
+            hermes update >$null 2>&1
+            $newVer = Get-HermesVersion
+            if (-not $newVer) { break }
+            if ($current -and $newVer -eq $current) { break }
+            $updated = $true
+            $current = $newVer
+        }
     } finally {
         if ($hadCi) {
             $env:CI = $previousCi
@@ -383,13 +500,11 @@ function Update-Hermes {
         }
     }
 
-    $newVer = Get-HermesVersion
-
-    if ($current -and $current -eq $newVer) {
+    if ($updated -and $current) {
+        $displayCurrent = if ($startVer) { $startVer } else { "unknown" }
+        Write-Host "  Updated $displayCurrent -> $current" -ForegroundColor Yellow
+    } elseif ($current) {
         Write-Host "  Already up to date ($current)" -ForegroundColor Green
-    } elseif ($newVer) {
-        $displayCurrent = if ($current) { $current } else { "unknown" }
-        Write-Host "  Updated $displayCurrent -> $newVer" -ForegroundColor Yellow
     } else {
         Write-Host "  Update check complete" -ForegroundColor Green
     }
@@ -403,6 +518,8 @@ switch ($Tool) {
     "pi"      { pi @ExtraArgs }
     "hermes"  { hermes --yolo @ExtraArgs }
     "update"  {
+        $dependenciesOk = Ensure-UpdateDependencies
+        Write-Host ""
         $ran = $false
         if (Test-AiCliEnabled "update" "claude") {
             if ($ran) { Write-Host "" }
@@ -431,7 +548,7 @@ switch ($Tool) {
         }
         if (Test-AiCliEnabled "update" "pi") {
             if ($ran) { Write-Host "" }
-            Update-NpmPackage "Pi Coding Agent" "@earendil-works/pi-coding-agent"
+            Update-NpmPackage "Pi Coding Agent" "@earendil-works/pi-coding-agent" "pi" @("@mariozechner/pi-coding-agent")
             $ran = $true
         }
         if (Test-AiCliEnabled "update" "pi_vs_claude_code") {
@@ -451,7 +568,12 @@ switch ($Tool) {
         }
         if ($ran) {
             Write-Host ""
-            Write-Host "All selected AI tools checked." -ForegroundColor Green
+            if ($dependenciesOk) {
+                Write-Host "All selected AI tools checked." -ForegroundColor Green
+            } else {
+                Write-Host "All selected AI tools checked, but some dependencies could not be installed." -ForegroundColor Yellow
+                exit 1
+            }
         } else {
             Write-Host "No update tools selected. Run 'ai setup' to choose tools." -ForegroundColor Yellow
         }
@@ -765,6 +887,7 @@ for api_id, display_name in MODEL_MAP.items():
         }
     }
     "setup" { Invoke-AiCliSetup }
+    "doctor" { Invoke-AiCliDoctor }
     default {
         Write-Host "Usage: ai <tool> [extra args]"
         Write-Host "  ai claude   -> claude --dangerously-skip-permissions"
@@ -774,6 +897,7 @@ for api_id, display_name in MODEL_MAP.items():
         Write-Host "  ai pi       -> pi"
         Write-Host "  ai hermes   -> hermes --yolo"
         Write-Host "  ai update   -> update all AI tools"
+        Write-Host "  ai doctor   -> diagnose and repair ai-cli install issues"
         Write-Host "  ai usage    -> show remaining usage by provider"
         Write-Host "  ai setup    -> choose tools for update and usage checks"
     }

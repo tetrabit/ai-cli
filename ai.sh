@@ -30,25 +30,18 @@ path_has_dir() {
 
 prepend_path_dir() {
     local dir="$1"
-    [[ -d "$dir" ]] || return 0
-    PATH=$(python3 - "$dir" "${PATH:-}" <<'PY'
-import os
-import sys
+    local item new_path old_ifs
 
-needle = os.path.normpath(sys.argv[1])
-parts = []
-seen = set()
-for item in sys.argv[2].split(os.pathsep):
-    if not item:
-        continue
-    normalized = os.path.normpath(item)
-    if normalized == needle or normalized in seen:
-        continue
-    seen.add(normalized)
-    parts.append(item)
-print(os.pathsep.join([sys.argv[1], *parts]))
-PY
-)
+    [[ -d "$dir" ]] || return 0
+    new_path="$dir"
+    old_ifs="$IFS"
+    IFS=:
+    for item in ${PATH:-}; do
+        [[ -n "$item" && "$item" != "$dir" ]] || continue
+        new_path="${new_path}:$item"
+    done
+    IFS="$old_ifs"
+    PATH="$new_path"
 }
 
 npm_config_prefix() {
@@ -448,6 +441,355 @@ cleanup_duplicate_npm_package_prefixes() {
     done < <(npm_known_user_prefixes)
 }
 
+npm_prefixes_for_target() {
+    local target_prefix="$1"
+
+    {
+        printf '%s\n' "$target_prefix"
+        npm_config_prefix
+        npm_known_user_prefixes
+    } | python3 -c 'import os,sys; seen=set();
+for line in sys.stdin:
+    value=os.path.normpath(line.strip())
+    if value and value not in seen:
+        seen.add(value); print(value)'
+}
+
+npm_prefix_is_writable_for_uninstall() {
+    local prefix="$1"
+    local global_root="$prefix/lib/node_modules"
+    local bin_dir="$prefix/bin"
+
+    [[ -d "$global_root" && -w "$global_root" ]] || return 1
+    [[ ! -d "$bin_dir" || -w "$bin_dir" ]]
+}
+
+prompt_for_sudo() {
+    local action="$1"
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo -e "${RED}  sudo is required to $action, but sudo was not found.${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}  sudo is required to $action.${NC}"
+    if [[ ! -t 0 ]]; then
+        echo -e "${YELLOW}  Run this command from an interactive terminal to enter your sudo password.${NC}"
+        return 1
+    fi
+
+    sudo -v
+}
+
+ai_cli_skip_dependency_install() {
+    [[ "${AI_CLI_SKIP_DEPENDENCY_INSTALL:-0}" == "1" ]]
+}
+
+ai_cli_package_manager() {
+    if command -v pacman >/dev/null 2>&1; then
+        printf 'pacman\n'
+    elif command -v apt-get >/dev/null 2>&1; then
+        printf 'apt\n'
+    elif command -v dnf >/dev/null 2>&1; then
+        printf 'dnf\n'
+    elif command -v brew >/dev/null 2>&1; then
+        printf 'brew\n'
+    else
+        printf 'none\n'
+    fi
+}
+
+ai_cli_packages_for_dependency() {
+    local manager="$1"
+    local dependency="$2"
+
+    case "$manager:$dependency" in
+        pacman:curl) printf 'curl\n' ;;
+        pacman:git) printf 'git\n' ;;
+        pacman:python3) printf 'python\n' ;;
+        pacman:npm) printf 'nodejs\nnpm\n' ;;
+        pacman:gh) printf 'github-cli\n' ;;
+        pacman:unzip) printf 'unzip\n' ;;
+        pacman:just) printf 'just\n' ;;
+        apt:curl) printf 'curl\n' ;;
+        apt:git) printf 'git\n' ;;
+        apt:python3) printf 'python3\n' ;;
+        apt:npm) printf 'nodejs\nnpm\n' ;;
+        apt:gh) printf 'gh\n' ;;
+        apt:unzip) printf 'unzip\n' ;;
+        apt:just) printf 'just\n' ;;
+        dnf:curl) printf 'curl\n' ;;
+        dnf:git) printf 'git\n' ;;
+        dnf:python3) printf 'python3\n' ;;
+        dnf:npm) printf 'nodejs\nnpm\n' ;;
+        dnf:gh) printf 'gh\n' ;;
+        dnf:unzip) printf 'unzip\n' ;;
+        dnf:just) printf 'just\n' ;;
+        brew:curl) printf 'curl\n' ;;
+        brew:git) printf 'git\n' ;;
+        brew:python3) printf 'python\n' ;;
+        brew:npm) printf 'node\n' ;;
+        brew:gh) printf 'gh\n' ;;
+        brew:unzip) printf 'unzip\n' ;;
+        brew:just) printf 'just\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+ai_cli_install_packages() {
+    local manager="$1"
+    shift
+    local -a packages=("$@")
+
+    [[ ${#packages[@]} -gt 0 ]] || return 0
+
+    if ai_cli_skip_dependency_install; then
+        echo -e "${YELLOW}  Dependency install skipped by AI_CLI_SKIP_DEPENDENCY_INSTALL=1.${NC}"
+        return 1
+    fi
+
+    case "$manager" in
+        pacman)
+            prompt_for_sudo "install ${packages[*]}" || return 1
+            if $VERBOSE; then
+                sudo pacman -Sy --noconfirm --needed "${packages[@]}"
+            else
+                sudo pacman -Sy --noconfirm --needed "${packages[@]}" >/dev/null
+            fi
+            ;;
+        apt)
+            prompt_for_sudo "install ${packages[*]}" || return 1
+            if $VERBOSE; then
+                sudo apt-get update
+                sudo apt-get install -y "${packages[@]}"
+            else
+                sudo apt-get update -qq >/dev/null
+                sudo apt-get install -y -qq "${packages[@]}" >/dev/null
+            fi
+            ;;
+        dnf)
+            prompt_for_sudo "install ${packages[*]}" || return 1
+            if $VERBOSE; then
+                sudo dnf install -y "${packages[@]}"
+            else
+                sudo dnf install -y -q "${packages[@]}" >/dev/null
+            fi
+            ;;
+        brew)
+            if $VERBOSE; then
+                brew install "${packages[@]}"
+            else
+                brew install "${packages[@]}" >/dev/null
+            fi
+            ;;
+        *)
+            echo -e "${YELLOW}  No supported package manager found for ${packages[*]}.${NC}"
+            return 1
+            ;;
+    esac
+}
+
+ensure_dependency_package() {
+    local dependency="$1"
+    local display_name="$2"
+    local manager
+    local package packages_text
+    local -a packages=()
+
+    manager="$(ai_cli_package_manager)"
+    if [[ "$manager" == "apt" && "$dependency" == "gh" ]]; then
+        ensure_command_dependency curl curl "curl" || return 1
+        if [[ ! -f /etc/apt/sources.list.d/github-cli.list || ! -f /usr/share/keyrings/githubcli-archive-keyring.gpg ]]; then
+            prompt_for_sudo "configure the GitHub CLI apt repository" || return 1
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+                | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null 2>&1
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+                | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+        fi
+    fi
+
+    if ! packages_text=$(ai_cli_packages_for_dependency "$manager" "$dependency"); then
+        echo -e "${YELLOW}  Could not map $display_name to a package for this system.${NC}"
+        return 1
+    fi
+    while IFS= read -r package; do
+        [[ -n "$package" ]] && packages+=("$package")
+    done <<< "$packages_text"
+
+    echo -e "${YELLOW}  $display_name is missing, installing...${NC}"
+    ai_cli_install_packages "$manager" "${packages[@]}"
+}
+
+ensure_command_dependency() {
+    local command_name="$1"
+    local dependency="$2"
+    local display_name="$3"
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    ensure_dependency_package "$dependency" "$display_name" || return 1
+    command -v "$command_name" >/dev/null 2>&1
+}
+
+ensure_bun_dependency() {
+    prepend_path_dir "$HOME/.bun/bin"
+    if command -v bun >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}  Bun is missing, installing...${NC}"
+    if ai_cli_skip_dependency_install; then
+        echo -e "${YELLOW}  Dependency install skipped by AI_CLI_SKIP_DEPENDENCY_INSTALL=1.${NC}"
+        return 1
+    fi
+
+    ensure_command_dependency curl curl "curl" || return 1
+    if [[ "$(uname -s)" == Linux* ]]; then
+        ensure_command_dependency unzip unzip "unzip" || return 1
+    fi
+
+    if $VERBOSE; then
+        curl -fsSL https://bun.com/install | bash
+    else
+        curl -fsSL https://bun.com/install 2>/dev/null | bash >/dev/null
+    fi
+
+    prepend_path_dir "$HOME/.bun/bin"
+    command -v bun >/dev/null 2>&1
+}
+
+ensure_just_dependency() {
+    if command -v just >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ "${AI_CLI_JUST_CHECKED:-0}" == "1" ]]; then
+        return 0
+    fi
+    AI_CLI_JUST_CHECKED=1
+
+    ensure_dependency_package just "just" || {
+        echo -e "${YELLOW}  just is still missing; Pi vs Claude Code dependencies can install, but recipes will not run until just is installed.${NC}"
+        return 0
+    }
+
+    if ! command -v just >/dev/null 2>&1; then
+        echo -e "${YELLOW}  just is still missing; Pi vs Claude Code dependencies can install, but recipes will not run until just is installed.${NC}"
+    fi
+}
+
+ensure_update_dependencies() {
+    local failed=false
+    local checked=false
+
+    echo -e "${CYAN}==> Checking ai-cli dependencies...${NC}"
+
+    ensure_command_dependency python3 python3 "Python 3" || failed=true
+
+    if ai_cli_enabled update claude || ai_cli_enabled update antigravity || ai_cli_enabled update hermes; then
+        ensure_command_dependency curl curl "curl" || failed=true
+        checked=true
+    fi
+
+    if ai_cli_enabled update pi_vs_claude_code || ai_cli_enabled update hermes; then
+        ensure_command_dependency git git "Git" || failed=true
+        checked=true
+    fi
+
+    if ai_cli_enabled update codex || ai_cli_enabled update pi; then
+        ensure_command_dependency npm npm "Node.js/npm" || failed=true
+        checked=true
+    fi
+
+    if ai_cli_enabled update gh_cli || ai_cli_enabled update copilot; then
+        ensure_command_dependency gh gh "GitHub CLI" || failed=true
+        checked=true
+    fi
+
+    if ai_cli_enabled update pi_vs_claude_code; then
+        ensure_bun_dependency || failed=true
+        ensure_just_dependency || true
+        checked=true
+    fi
+
+    if ! $failed; then
+        if $checked; then
+            echo -e "${GREEN}  Dependencies ready.${NC}"
+        else
+            echo -e "${GREEN}  No selected tools require dependency checks.${NC}"
+        fi
+    fi
+
+    ! $failed
+}
+
+npm_uninstall_package_from_prefix() {
+    local prefix="$1"
+    local package="$2"
+    local npm_bin
+    local -a cmd
+
+    npm_bin="$(command -v npm 2>/dev/null || true)"
+    if [[ -z "$npm_bin" ]]; then
+        echo -e "${RED}  npm is required to remove $package.${NC}"
+        return 1
+    fi
+
+    cmd=("$npm_bin" uninstall -g --prefix "$prefix" "$package")
+    if ! $VERBOSE; then
+        cmd+=(--loglevel error)
+    fi
+
+    if npm_prefix_is_writable_for_uninstall "$prefix"; then
+        if $VERBOSE; then
+            "${cmd[@]}"
+        else
+            "${cmd[@]}" >/dev/null
+        fi
+        return
+    fi
+
+    if ! prompt_for_sudo "change npm packages in $prefix"; then
+        return 1
+    fi
+
+    if $VERBOSE; then
+        sudo "${cmd[@]}"
+    else
+        sudo "${cmd[@]}" >/dev/null
+    fi
+}
+
+cleanup_legacy_npm_package_prefixes() {
+    local display_name="$1"
+    local package="$2"
+    local binary="$3"
+    local target_prefix="$4"
+    shift 4
+    local -a legacy_packages=("$@")
+    local legacy_package prefix version
+
+    [[ ${#legacy_packages[@]} -gt 0 ]] || return 0
+
+    for legacy_package in "${legacy_packages[@]}"; do
+        [[ -n "$legacy_package" && "$legacy_package" != "$package" ]] || continue
+        while IFS= read -r prefix; do
+            [[ -n "$prefix" ]] || continue
+            version=$(read_npm_package_version "$legacy_package" "$prefix")
+            [[ -n "$version" ]] || continue
+            [[ -e "$prefix/bin/$binary" || -L "$prefix/bin/$binary" ]] || continue
+
+            echo -e "${YELLOW}  Removing legacy ${display_name} ${version} from $prefix to free $binary.${NC}"
+            if ! npm_uninstall_package_from_prefix "$prefix" "$legacy_package"; then
+                return 1
+            fi
+        done < <(npm_prefixes_for_target "$target_prefix")
+    done
+}
+
 ensure_npm_binary_path() {
     local display_name="$1"
     local package="$2"
@@ -472,6 +814,8 @@ install_npm_package() {
     local display_name="$1"
     local package="$2"
     local binary="$3"
+    shift 3
+    local -a legacy_packages=("$@")
     local target_prefix
     local -a cmd=(npm install -g "${package}@latest" --no-fund)
 
@@ -485,6 +829,7 @@ install_npm_package() {
         cmd+=(--loglevel error)
     fi
 
+    cleanup_legacy_npm_package_prefixes "$display_name" "$package" "$binary" "$target_prefix" "${legacy_packages[@]}"
     "${cmd[@]}"
     ensure_npm_binary_path "$display_name" "$package" "$binary" "$target_prefix"
 }
@@ -493,6 +838,8 @@ check_npm_package() {
     local display_name="$1"
     local package="$2"
     local binary="$3"
+    shift 3
+    local -a legacy_packages=("$@")
 
     echo -e "${CYAN}==> Checking ${display_name}...${NC}"
     local current latest target_prefix
@@ -508,14 +855,160 @@ check_npm_package() {
 
     if [[ -z "$current" ]]; then
         echo -e "${YELLOW}  Not installed, installing ${latest:-latest}...${NC}"
-        install_npm_package "$display_name" "$package" "$binary"
+        install_npm_package "$display_name" "$package" "$binary" "${legacy_packages[@]}"
     elif [[ "$current" == "$latest" ]]; then
         echo -e "${GREEN}  Already up to date (${current})${NC}"
+        cleanup_legacy_npm_package_prefixes "$display_name" "$package" "$binary" "$target_prefix" "${legacy_packages[@]}"
         ensure_npm_binary_path "$display_name" "$package" "$binary" "$target_prefix"
     else
         echo -e "${YELLOW}  Updating ${current} -> ${latest:-latest}...${NC}"
-        install_npm_package "$display_name" "$package" "$binary"
+        install_npm_package "$display_name" "$package" "$binary" "${legacy_packages[@]}"
     fi
+}
+
+canonical_file_path() {
+    local path="$1"
+    local dir base
+
+    [[ -n "$path" ]] || return 1
+    if [[ "$path" == */* ]]; then
+        dir="${path%/*}"
+        base="${path##*/}"
+        [[ -n "$dir" ]] || dir="/"
+    else
+        dir="."
+        base="$path"
+    fi
+
+    (
+        cd -P -- "$dir" >/dev/null 2>&1
+        printf '%s/%s\n' "$PWD" "$base"
+    )
+}
+
+current_script_path() {
+    local source="${BASH_SOURCE[0]:-$0}"
+
+    [[ -n "$source" ]] || return 1
+    if [[ "$source" != /* ]]; then
+        source="$PWD/$source"
+    fi
+    canonical_file_path "$source"
+}
+
+doctor_install_file() {
+    local source="$1"
+    local dest="$2"
+    local mode="$3"
+    local dest_dir parent
+    local use_sudo=false
+
+    dest_dir="$(dirname "$dest")"
+    parent="$(dirname "$dest_dir")"
+
+    if [[ ! -d "$dest_dir" ]]; then
+        if [[ -w "$parent" ]]; then
+            if ! mkdir -p "$dest_dir"; then
+                return 1
+            fi
+        else
+            use_sudo=true
+        fi
+    fi
+
+    if [[ -d "$dest_dir" ]]; then
+        if [[ ! -w "$dest_dir" || ( -e "$dest" && ! -w "$dest" ) ]]; then
+            use_sudo=true
+        fi
+    fi
+
+    if $use_sudo; then
+        if ! prompt_for_sudo "update $dest"; then
+            return 1
+        fi
+        if ! sudo mkdir -p "$dest_dir"; then
+            return 1
+        fi
+        sudo install -m "$mode" "$source" "$dest"
+    else
+        install -m "$mode" "$source" "$dest"
+    fi
+}
+
+doctor_check_ai_cli_install() {
+    echo -e "${CYAN}==> Checking ai-cli launcher...${NC}"
+
+    local source path_ai install_path
+    source="$(current_script_path || true)"
+    if [[ -z "$source" || ! -f "$source" ]]; then
+        echo -e "${YELLOW}  Could not locate the running ai-cli script; skipping launcher repair.${NC}"
+        return 0
+    fi
+
+    path_ai="$(command -v ai 2>/dev/null || true)"
+    if [[ -z "$path_ai" ]]; then
+        install_path="${AI_CLI_INSTALL_DIR:-/usr/local/bin}/ai"
+        echo -e "${YELLOW}  ai is not on PATH. Installing this script to $install_path.${NC}"
+        if ! doctor_install_file "$source" "$install_path" 0755; then
+            return 1
+        fi
+        echo -e "${GREEN}  Installed ai -> $install_path${NC}"
+        return 0
+    fi
+
+    if cmp -s "$source" "$path_ai"; then
+        echo -e "${GREEN}  ai on PATH already matches this script ($path_ai).${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}  ai on PATH differs from this script: $path_ai${NC}"
+    echo -e "${YELLOW}  Updating $path_ai from $source.${NC}"
+    if ! doctor_install_file "$source" "$path_ai" 0755; then
+        return 1
+    fi
+
+    if cmp -s "$source" "$path_ai"; then
+        echo -e "${GREEN}  Updated ai -> $path_ai${NC}"
+    else
+        echo -e "${RED}  Failed to verify updated ai at $path_ai.${NC}"
+        return 1
+    fi
+}
+
+doctor_check_npm_handoffs() {
+    echo -e "${CYAN}==> Checking npm package handoffs...${NC}"
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo -e "${YELLOW}  npm not found; skipping npm package checks.${NC}"
+        return 0
+    fi
+
+    cleanup_legacy_npm_package_prefixes \
+        "Pi Coding Agent" \
+        "@earendil-works/pi-coding-agent" \
+        "pi" \
+        "$(npm_install_prefix)" \
+        "@mariozechner/pi-coding-agent"
+
+    echo -e "${GREEN}  npm package handoffs checked.${NC}"
+}
+
+do_doctor() {
+    local failed=false
+
+    doctor_check_ai_cli_install || failed=true
+    echo ""
+    ensure_update_dependencies || failed=true
+    echo ""
+    doctor_check_npm_handoffs || failed=true
+
+    echo ""
+    if $failed; then
+        echo -e "${RED}Doctor found issues it could not fix.${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}Doctor checks complete.${NC}"
 }
 
 pi_vs_claude_code_dir() {
@@ -535,7 +1028,7 @@ check_pi_vs_claude_code() {
     local repo_dir
     repo_dir="$(pi_vs_claude_code_dir)"
 
-    if ! command -v git >/dev/null 2>&1; then
+    if ! ensure_command_dependency git git "Git"; then
         echo -e "${YELLOW}  Git is required to install this repo.${NC}"
         return
     fi
@@ -576,8 +1069,8 @@ check_pi_vs_claude_code() {
         echo -e "${GREEN}  Cloned to $repo_dir${NC}"
     fi
 
-    if ! command -v bun >/dev/null 2>&1; then
-        echo -e "${YELLOW}  Bun is required for dependencies. Install Bun, then rerun 'ai update'.${NC}"
+    if ! ensure_bun_dependency; then
+        echo -e "${YELLOW}  Bun is required for dependencies.${NC}"
         return
     fi
 
@@ -590,6 +1083,7 @@ check_pi_vs_claude_code() {
         }
     fi
 
+    ensure_just_dependency || true
     if command -v just >/dev/null 2>&1; then
         echo -e "${GREEN}  Dependencies installed. Run recipes from $repo_dir with 'just'.${NC}"
     else
@@ -763,12 +1257,18 @@ check_gh_copilot() {
 }
 
 install_hermes() {
+    local install_dir="${1:-}"
     local install_url="https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh"
+    local -a env_cmd=(env "CI=${CI:-true}")
+
+    if [[ -n "$install_dir" ]]; then
+        env_cmd+=("HERMES_INSTALL_DIR=$install_dir")
+    fi
 
     if $VERBOSE; then
-        curl -fsSL "$install_url" | CI="${CI:-true}" bash -s -- --skip-setup
+        curl -fsSL "$install_url" | "${env_cmd[@]}" bash -s -- --skip-setup
     else
-        curl -fsSL "$install_url" 2>/dev/null | CI="${CI:-true}" bash -s -- --skip-setup >/dev/null 2>&1
+        curl -fsSL "$install_url" 2>/dev/null | "${env_cmd[@]}" bash -s -- --skip-setup >/dev/null 2>&1
     fi
 }
 
@@ -779,8 +1279,95 @@ read_hermes_version() {
     printf '%s\n' "$output" | head -n 1 | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true
 }
 
+read_hermes_project_dir() {
+    local output
+
+    output=$(hermes --version 2>/dev/null || hermes version 2>/dev/null || true)
+    printf '%s\n' "$output" | sed -n 's/^Project:[[:space:]]*//p' | head -n 1
+}
+
+git_worktree_dirty() {
+    local repo_dir="$1"
+    [[ -n "$(git -C "$repo_dir" status --porcelain 2>/dev/null)" ]]
+}
+
+sync_hermes_with_upstream() {
+    local repo_dir="$1"
+    local branch upstream_url before after
+    local upstream_ahead update_mode
+
+    HERMES_UPSTREAM_SYNC_FAILED=false
+    [[ -n "$repo_dir" && -d "$repo_dir/.git" ]] || return 1
+
+    branch=$(git -C "$repo_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    [[ "$branch" == "main" ]] || return 1
+
+    upstream_url=$(git -C "$repo_dir" remote get-url upstream 2>/dev/null || true)
+    if [[ -z "$upstream_url" ]]; then
+        git -C "$repo_dir" remote add upstream https://github.com/NousResearch/hermes-agent.git 2>/dev/null || return 1
+    fi
+
+    if $VERBOSE; then
+        git -C "$repo_dir" fetch upstream || return 1
+    else
+        git -C "$repo_dir" fetch upstream >/dev/null 2>&1 || return 1
+    fi
+
+    upstream_ahead=$(git -C "$repo_dir" rev-list --count HEAD..upstream/main 2>/dev/null || printf '0')
+    [[ "$upstream_ahead" =~ ^[0-9]+$ && "$upstream_ahead" -gt 0 ]] || return 1
+
+    if git_worktree_dirty "$repo_dir"; then
+        HERMES_UPSTREAM_SYNC_FAILED=true
+        echo -e "${YELLOW}  Hermes checkout has local changes; leaving it untouched.${NC}"
+        return 1
+    fi
+
+    if git -C "$repo_dir" merge-base --is-ancestor HEAD upstream/main >/dev/null 2>&1; then
+        update_mode="ff"
+    else
+        update_mode="merge"
+        echo -e "${YELLOW}  Hermes fork has local commits; merging upstream/main to preserve them.${NC}"
+    fi
+
+    if [[ "$update_mode" == "merge" ]] && ! git -C "$repo_dir" merge-tree "$(git -C "$repo_dir" merge-base HEAD upstream/main)" HEAD upstream/main >/dev/null 2>&1; then
+        return 1
+    fi
+
+    before=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)
+
+    if [[ "$update_mode" == "ff" ]]; then
+        if $VERBOSE; then
+            git -C "$repo_dir" pull --ff-only upstream main || return 1
+        else
+            git -C "$repo_dir" pull --ff-only upstream main >/dev/null 2>&1 || return 1
+        fi
+    else
+        if $VERBOSE; then
+            git -C "$repo_dir" -c user.name=ai-cli -c user.email=ai-cli@localhost merge --no-edit upstream/main || {
+                git -C "$repo_dir" merge --abort >/dev/null 2>&1 || true
+                HERMES_UPSTREAM_SYNC_FAILED=true
+                echo -e "${YELLOW}  Could not merge upstream/main into the Hermes fork automatically.${NC}"
+                return 1
+            }
+        else
+            git -C "$repo_dir" -c user.name=ai-cli -c user.email=ai-cli@localhost merge --no-edit upstream/main >/dev/null 2>&1 || {
+                git -C "$repo_dir" merge --abort >/dev/null 2>&1 || true
+                HERMES_UPSTREAM_SYNC_FAILED=true
+                echo -e "${YELLOW}  Could not merge upstream/main into the Hermes fork automatically.${NC}"
+                return 1
+            }
+        fi
+    fi
+
+    after=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || true)
+    [[ -n "$before" && -n "$after" && "$before" != "$after" ]]
+}
+
 check_hermes() {
     echo -e "${CYAN}==> Checking Hermes Agent...${NC}"
+    ensure_command_dependency curl curl "curl" || return
+    ensure_command_dependency git git "Git" || return
+
     if ! command -v hermes >/dev/null 2>&1; then
         echo -e "${YELLOW}  Not installed, installing...${NC}"
         if ! install_hermes; then
@@ -809,26 +1396,53 @@ check_hermes() {
         return
     fi
 
-    local current
+    local current start_ver new_ver iteration updated=false
+    local project_dir upstream_synced=false
+
+    start_ver=$(read_hermes_version)
+    project_dir=$(read_hermes_project_dir)
+    if sync_hermes_with_upstream "$project_dir"; then
+        upstream_synced=true
+        install_hermes "$project_dir" || true
+    elif [[ "${HERMES_UPSTREAM_SYNC_FAILED:-false}" == "true" ]]; then
+        echo -e "${YELLOW}  Switching Hermes launcher to the official checkout so latest can install without overwriting fork commits.${NC}"
+        install_hermes || true
+    fi
+
     current=$(read_hermes_version)
 
     # Hermes updates reinstall Node dependencies whose postinstall hooks may
     # write directly to /dev/tty, bypassing stdout/stderr redirection.  CI=true
     # keeps those cosmetic install demos quiet without disabling required
     # install scripts.
-    if $VERBOSE; then
-        CI="${CI:-true}" hermes update
-    else
-        CI="${CI:-true}" hermes update >/dev/null 2>&1
-    fi
+    for iteration in {1..8}; do
+        if $VERBOSE; then
+            CI="${CI:-true}" hermes update
+        else
+            CI="${CI:-true}" hermes update >/dev/null 2>&1
+        fi
 
-    local new_ver
-    new_ver=$(read_hermes_version)
+        new_ver=$(read_hermes_version)
+        if [[ -z "$new_ver" ]]; then
+            break
+        fi
 
-    if [[ -n "$current" && "$current" == "$new_ver" ]]; then
+        if [[ -n "$current" && "$new_ver" == "$current" ]]; then
+            break
+        fi
+
+        updated=true
+        current="$new_ver"
+    done
+
+    if $updated && [[ -n "$current" ]]; then
+        echo -e "${YELLOW}  Updated ${start_ver:-unknown} -> ${current}${NC}"
+    elif [[ -n "$start_ver" && -n "$current" && "$start_ver" != "$current" ]]; then
+        echo -e "${YELLOW}  Updated ${start_ver} -> ${current}${NC}"
+    elif $upstream_synced && [[ -n "$current" ]]; then
+        echo -e "${YELLOW}  Updated from upstream (${current})${NC}"
+    elif [[ -n "$current" ]]; then
         echo -e "${GREEN}  Already up to date (${current})${NC}"
-    elif [[ -n "$new_ver" ]]; then
-        echo -e "${YELLOW}  Updated ${current:-unknown} -> ${new_ver}${NC}"
     else
         echo -e "${GREEN}  Update check complete${NC}"
     fi
@@ -1774,13 +2388,18 @@ run_selected_usage() {
 }
 
 do_update() {
+    local dependency_ok=true
     update_ran=false
+
+    ensure_update_dependencies || dependency_ok=false
+    echo ""
+
     run_selected_update claude check_claude
     run_selected_update gh_cli check_gh_cli
     run_selected_update copilot check_gh_copilot
     run_selected_update antigravity check_antigravity
     run_selected_update codex check_npm_package "Codex CLI" "@openai/codex" "codex"
-    run_selected_update pi check_npm_package "Pi Coding Agent" "@earendil-works/pi-coding-agent" "pi"
+    run_selected_update pi check_npm_package "Pi Coding Agent" "@earendil-works/pi-coding-agent" "pi" "@mariozechner/pi-coding-agent"
     run_selected_update pi_vs_claude_code check_pi_vs_claude_code
     run_selected_update hermes check_hermes
 
@@ -1788,7 +2407,12 @@ do_update() {
         echo -e "${YELLOW}No update tools selected. Run 'ai setup' to choose tools.${NC}"
     else
         echo ""
-        echo -e "${GREEN}All selected AI tools checked.${NC}"
+        if $dependency_ok; then
+            echo -e "${GREEN}All selected AI tools checked.${NC}"
+        else
+            echo -e "${YELLOW}All selected AI tools checked, but some dependencies could not be installed.${NC}"
+            return 1
+        fi
     fi
 }
 
@@ -1827,6 +2451,7 @@ case "$tool" in
     pi)      exec pi "$@" ;;
     hermes)  exec hermes --yolo "$@" ;;
     update)  do_update ;;
+    doctor)  do_doctor ;;
     usage)   do_usage ;;
     setup)   do_setup ;;
     *)
@@ -1838,6 +2463,7 @@ case "$tool" in
         echo "  ai pi       -> pi"
         echo "  ai hermes   -> hermes --yolo"
         echo "  ai update   -> update all AI tools"
+        echo "  ai doctor   -> diagnose and repair ai-cli install issues"
         echo "  ai usage    -> show remaining usage by provider"
         echo "  ai setup    -> choose tools for update and usage checks"
         echo ""
