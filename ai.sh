@@ -31,11 +31,48 @@ path_has_dir() {
 prepend_path_dir() {
     local dir="$1"
     [[ -d "$dir" ]] || return 0
-    path_has_dir "$dir" || PATH="$dir:$PATH"
+    PATH=$(python3 - "$dir" "${PATH:-}" <<'PY'
+import os
+import sys
+
+needle = os.path.normpath(sys.argv[1])
+parts = []
+seen = set()
+for item in sys.argv[2].split(os.pathsep):
+    if not item:
+        continue
+    normalized = os.path.normpath(item)
+    if normalized == needle or normalized in seen:
+        continue
+    seen.add(normalized)
+    parts.append(item)
+print(os.pathsep.join([sys.argv[1], *parts]))
+PY
+)
+}
+
+npm_config_prefix() {
+    npm config get prefix 2>/dev/null | head -n 1 || true
+}
+
+npm_prefix_is_under_home() {
+    local prefix="$1"
+    [[ -n "$prefix" && "$prefix" == "$HOME"/* ]]
 }
 
 npm_user_prefix() {
-    printf '%s\n' "${AI_CLI_NPM_PREFIX:-$HOME/.local}"
+    if [[ -n "${AI_CLI_NPM_PREFIX:-}" ]]; then
+        printf '%s\n' "$AI_CLI_NPM_PREFIX"
+        return
+    fi
+
+    local configured_prefix
+    configured_prefix="$(npm_config_prefix)"
+    if npm_prefix_is_under_home "$configured_prefix"; then
+        printf '%s\n' "$configured_prefix"
+    else
+        printf '%s\n' "$HOME/.local"
+    fi
 }
 
 npm_user_bin() {
@@ -338,7 +375,7 @@ read_command_version() {
 npm_global_install_is_writable() {
     local prefix global_root
 
-    prefix=$(npm config get prefix 2>/dev/null || true)
+    prefix="$(npm_config_prefix)"
     [[ -n "$prefix" ]] || return 1
 
     global_root="$prefix/lib/node_modules"
@@ -349,22 +386,99 @@ npm_global_install_is_writable() {
     fi
 }
 
+npm_install_prefix() {
+    local configured_prefix
+    if [[ -n "${AI_CLI_NPM_PREFIX:-}" ]]; then
+        printf '%s\n' "$AI_CLI_NPM_PREFIX"
+        return
+    fi
+
+    configured_prefix="$(npm_config_prefix)"
+    if npm_global_install_is_writable && [[ -n "$configured_prefix" ]]; then
+        printf '%s\n' "$configured_prefix"
+    else
+        printf '%s\n' "$(npm_user_prefix)"
+    fi
+}
+
+npm_known_user_prefixes() {
+    local prefix
+    for prefix in "$(npm_user_prefix)" "$(npm_config_prefix)" "$HOME/.local" "$HOME/.npm-global"; do
+        [[ -n "$prefix" ]] || continue
+        npm_prefix_is_under_home "$prefix" || continue
+        printf '%s\n' "$prefix"
+    done | python3 -c 'import os,sys; seen=set();
+for line in sys.stdin:
+    value=os.path.normpath(line.strip())
+    if value and value not in seen:
+        seen.add(value); print(value)'
+}
+
+persist_npm_bin_path_if_user_managed() {
+    local prefix="$1"
+    local bin_dir="$prefix/bin"
+
+    npm_prefix_is_under_home "$prefix" || return 0
+    persist_user_bin_path >/dev/null || true
+    if ! path_has_dir "$bin_dir"; then
+        echo -e "${GREEN}  Added ${bin_dir} to your shell PATH for future sessions.${NC}"
+    fi
+}
+
+cleanup_duplicate_npm_package_prefixes() {
+    local display_name="$1"
+    local package="$2"
+    local binary="$3"
+    local target_prefix="$4"
+    local prefix version
+
+    target_prefix="$(python3 -c 'import os,sys; print(os.path.normpath(sys.argv[1]))' "$target_prefix")"
+    while IFS= read -r prefix; do
+        [[ -n "$prefix" && "$prefix" != "$target_prefix" ]] || continue
+        version=$(read_npm_package_version "$package" "$prefix")
+        [[ -n "$version" ]] || continue
+        [[ -e "$prefix/bin/$binary" || -L "$prefix/bin/$binary" ]] || continue
+
+        echo -e "${YELLOW}  Removing duplicate ${display_name} ${version} from $prefix to prevent PATH shadowing.${NC}"
+        if $VERBOSE; then
+            npm uninstall -g --prefix "$prefix" "$package" || true
+        else
+            npm uninstall -g --prefix "$prefix" "$package" --loglevel error >/dev/null 2>&1 || true
+        fi
+    done < <(npm_known_user_prefixes)
+}
+
+ensure_npm_binary_path() {
+    local display_name="$1"
+    local package="$2"
+    local binary="$3"
+    local target_prefix="$4"
+    local target_bin="$target_prefix/bin"
+    local resolved=""
+
+    mkdir -p "$target_bin"
+    persist_npm_bin_path_if_user_managed "$target_prefix"
+    prepend_path_dir "$target_bin"
+    cleanup_duplicate_npm_package_prefixes "$display_name" "$package" "$binary" "$target_prefix"
+
+    resolved=$(command -v "$binary" 2>/dev/null || true)
+    if [[ -n "$resolved" && "$resolved" != "$target_bin/$binary" ]]; then
+        echo -e "${YELLOW}  WARNING: $binary resolves to $resolved, not $target_bin/$binary.${NC}"
+        echo -e "${YELLOW}  Check your PATH for another earlier install.${NC}"
+    fi
+}
+
 install_npm_package() {
     local display_name="$1"
     local package="$2"
-    local prefix=""
-    local bin_dir
-    local bin_was_on_path=false
+    local binary="$3"
+    local target_prefix
     local -a cmd=(npm install -g "${package}@latest" --no-fund)
 
-    if ! npm_global_install_is_writable; then
-        prefix=$(npm_user_prefix)
-        bin_dir="$(npm_user_bin)"
-        if path_has_dir "$bin_dir"; then
-            bin_was_on_path=true
-        fi
-        mkdir -p "$prefix"
-        cmd+=(--prefix "$prefix")
+    target_prefix="$(npm_install_prefix)"
+    if [[ "$(npm_config_prefix)" != "$target_prefix" ]]; then
+        mkdir -p "$target_prefix"
+        cmd+=(--prefix "$target_prefix")
     fi
 
     if ! $VERBOSE; then
@@ -372,14 +486,7 @@ install_npm_package() {
     fi
 
     "${cmd[@]}"
-
-    if [[ -n "$prefix" ]]; then
-        prepend_path_dir "$bin_dir"
-        if ! $bin_was_on_path; then
-            persist_user_bin_path >/dev/null || true
-            echo -e "${GREEN}  Added ${bin_dir} to your shell PATH for future sessions.${NC}"
-        fi
-    fi
+    ensure_npm_binary_path "$display_name" "$package" "$binary" "$target_prefix"
 }
 
 check_npm_package() {
@@ -388,10 +495,11 @@ check_npm_package() {
     local binary="$3"
 
     echo -e "${CYAN}==> Checking ${display_name}...${NC}"
-    local current latest
+    local current latest target_prefix
+    target_prefix="$(npm_install_prefix)"
     current=$(read_npm_package_version "$package")
     if [[ -z "$current" ]]; then
-        current=$(read_npm_package_version "$package" "$(npm_user_prefix)")
+        current=$(read_npm_package_version "$package" "$target_prefix")
     fi
     if [[ -z "$current" ]]; then
         current=$(read_command_version "$binary" || true)
@@ -400,12 +508,13 @@ check_npm_package() {
 
     if [[ -z "$current" ]]; then
         echo -e "${YELLOW}  Not installed, installing ${latest:-latest}...${NC}"
-        install_npm_package "$display_name" "$package"
+        install_npm_package "$display_name" "$package" "$binary"
     elif [[ "$current" == "$latest" ]]; then
         echo -e "${GREEN}  Already up to date (${current})${NC}"
+        ensure_npm_binary_path "$display_name" "$package" "$binary" "$target_prefix"
     else
         echo -e "${YELLOW}  Updating ${current} -> ${latest:-latest}...${NC}"
-        install_npm_package "$display_name" "$package"
+        install_npm_package "$display_name" "$package" "$binary"
     fi
 }
 

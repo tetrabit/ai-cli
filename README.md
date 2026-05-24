@@ -52,7 +52,7 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks each tool for updates before installing. If Antigravity CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Codex and Pi use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. When npm falls back to `~/.local`, `ai update` also adds `~/.local/bin` to your shell PATH for future sessions.
+Checks each tool for updates before installing. If Antigravity CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Codex and Pi use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. For npm tools, `ai update` prefers your configured user npm prefix when it lives under your home directory (for example `~/.npm-global`) and otherwise falls back to `~/.local`. It moves that prefix's `bin` directory to the front of the current update session, keeps the ai-cli managed shell PATH block pointed at the chosen prefix, and removes duplicate user-prefix installs of the same package that could shadow the upgraded binary.
 
 `ai update` also installs or updates the Pi vs Claude Code harness from `https://github.com/disler/pi-vs-claude-code`. The checkout lives at `${XDG_DATA_HOME:-~/.local/share}/ai-cli/pi-vs-claude-code` on Linux/macOS, `%LOCALAPPDATA%\ai-cli\pi-vs-claude-code` on Windows, or `AI_CLI_PI_VS_CLAUDE_CODE_DIR` when set. Bun is required to install its dependencies, and `just` is required to use the bundled recipes.
 
