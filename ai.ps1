@@ -14,7 +14,8 @@ $UpdateTools = @(
     @{ Key = "pi"; Label = "Pi Coding Agent" },
     @{ Key = "pi_vs_claude_code"; Label = "Pi vs Claude Code" },
     @{ Key = "opencode"; Label = "OpenCode" },
-    @{ Key = "hermes"; Label = "Hermes Agent" }
+    @{ Key = "hermes"; Label = "Hermes Agent" },
+    @{ Key = "omx"; Label = "Oh My Codex" }
 )
 
 $UsageTools = @(
@@ -285,7 +286,7 @@ function Ensure-UpdateDependencies {
     Write-Host "==> Checking ai-cli dependencies..." -ForegroundColor Cyan
     $ok = $true
 
-    if ((Test-AiCliEnabled "update" "codex") -or (Test-AiCliEnabled "update" "pi")) {
+    if ((Test-AiCliEnabled "update" "codex") -or (Test-AiCliEnabled "update" "pi") -or (Test-AiCliEnabled "update" "omx")) {
         if (-not (Ensure-CommandDependency "npm" "Node.js/npm" "OpenJS.NodeJS.LTS")) { $ok = $false }
     }
     if ((Test-AiCliEnabled "update" "gh_cli") -or (Test-AiCliEnabled "update" "copilot")) {
@@ -322,6 +323,31 @@ function Invoke-AiCliDoctor {
     }
 
     Write-Host ""
+    if (Test-AiCliEnabled "update" "omx") {
+        Write-Host "==> Checking Oh My Codex..." -ForegroundColor Cyan
+        if (Get-Command omx -ErrorAction SilentlyContinue) {
+            $omxVer = $null
+            try { $omxVer = (omx --version 2>$null | Select-Object -First 1) } catch {}
+            if ($omxVer) {
+                Write-Host "  Oh My Codex: $omxVer" -ForegroundColor Green
+            } else {
+                Write-Host "  Oh My Codex: installed" -ForegroundColor Green
+            }
+            try {
+                omx doctor >$null 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "  omx doctor reported issues; run 'omx doctor' for details." -ForegroundColor Yellow
+                }
+            } catch {}
+        } else {
+            Write-Host "  omx not found" -ForegroundColor Yellow
+            if (Get-Command npm -ErrorAction SilentlyContinue) {
+                Write-Host "    Install with: npm install -g oh-my-codex" -ForegroundColor Yellow
+            }
+        }
+        Write-Host ""
+    }
+
     if ($dependenciesOk) {
         Write-Host "Doctor checks complete." -ForegroundColor Green
     } else {
@@ -564,6 +590,11 @@ switch ($Tool) {
         if (Test-AiCliEnabled "update" "hermes") {
             if ($ran) { Write-Host "" }
             Update-Hermes
+            $ran = $true
+        }
+        if (Test-AiCliEnabled "update" "omx") {
+            if ($ran) { Write-Host "" }
+            Update-NpmPackage "Oh My Codex" "oh-my-codex"
             $ran = $true
         }
         if ($ran) {

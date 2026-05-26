@@ -42,6 +42,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/tetrabit/ai-cli/main/a
 | GitHub Copilot | `ai copilot` | `gh copilot --yolo` |
 | Pi Coding Agent | `ai pi` | `pi` |
 | Hermes Agent | `ai hermes` | `hermes --yolo` |
+| Oh My Codex | — | managed by `ai update` and `ai doctor` |
 
 All extra arguments are forwarded to the underlying tool.
 
@@ -52,7 +53,7 @@ ai update
 ai update --verbose    # show full output from all tools
 ```
 
-Checks dependencies and each selected tool before installing updates. Missing dependencies are installed first when ai-cli knows how to install them for the current platform, including Bun for Pi vs Claude Code. If Antigravity CLI, Codex CLI, Pi Coding Agent, or Hermes Agent are missing, `ai update` installs them first. Codex and Pi use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. For npm tools, `ai update` prefers your configured user npm prefix when it lives under your home directory (for example `~/.npm-global`) and otherwise falls back to `~/.local`. It moves that prefix's `bin` directory to the front of the current update session, keeps the ai-cli managed shell PATH block pointed at the chosen prefix, and removes duplicate user-prefix installs of the same package that could shadow the upgraded binary.
+Checks dependencies and each selected tool before installing updates. Missing dependencies are installed first when ai-cli knows how to install them for the current platform, including Bun for Pi vs Claude Code. If Antigravity CLI, Codex CLI, Pi Coding Agent, Hermes Agent, or Oh My Codex are missing, `ai update` installs them first. Codex, Pi, and Oh My Codex use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. For npm tools, `ai update` prefers your configured user npm prefix when it lives under your home directory (for example `~/.npm-global`) and otherwise falls back to `~/.local`. It moves that prefix's `bin` directory to the front of the current update session, keeps the ai-cli managed shell PATH block pointed at the chosen prefix, and removes duplicate user-prefix installs of the same package that could shadow the upgraded binary.
 
 `ai update` also installs or updates the Pi vs Claude Code harness from `https://github.com/disler/pi-vs-claude-code`. The checkout lives at `${XDG_DATA_HOME:-~/.local/share}/ai-cli/pi-vs-claude-code` on Linux/macOS, `%LOCALAPPDATA%\ai-cli\pi-vs-claude-code` on Windows, or `AI_CLI_PI_VS_CLAUDE_CODE_DIR` when set. Bun is required to install its dependencies, and `just` is required to use the bundled recipes.
 
@@ -62,7 +63,7 @@ Checks dependencies and each selected tool before installing updates. Missing de
 ai doctor
 ```
 
-Checks for common install breakage and fixes what it can. On Linux/macOS, `ai doctor` replaces a stale `ai` launcher on PATH with the script currently running, prompting for `sudo` when that launcher is in a protected location such as `/usr/local/bin`. From a local checkout, run `./ai.sh doctor` once if the installed `ai` command is too old to know about `doctor`. It also checks missing dependencies and removes known legacy npm package handoffs, such as the old Pi Coding Agent package that can leave a `pi` binary behind and block the current package from installing.
+Checks for common install breakage and fixes what it can. On Linux/macOS, `ai doctor` replaces a stale `ai` launcher on PATH with the script currently running, prompting for `sudo` when that launcher is in a protected location such as `/usr/local/bin`. From a local checkout, run `./ai.sh doctor` once if the installed `ai` command is too old to know about `doctor`. It also checks missing dependencies, removes known legacy npm package handoffs (such as the old Pi Coding Agent package), and runs `omx doctor` to verify the Oh My Codex installation.
 
 | Tool | Windows | Linux | macOS |
 |------|---------|-------|-------|
@@ -74,6 +75,7 @@ Checks for common install breakage and fixes what it can. On Linux/macOS, `ai do
 | Pi Coding Agent | npm version check | npm version check | npm version check |
 | Pi vs Claude Code | git clone/pull + `bun install` | git clone/pull + `bun install` | git clone/pull + `bun install` |
 | Hermes Agent | official installer when missing, otherwise `hermes update` | official installer when missing, otherwise `hermes update` | official installer when missing, otherwise `hermes update` |
+| Oh My Codex | npm version check + `omx doctor` | npm version check + `omx doctor` | npm version check + `omx doctor` |
 
 ## Choose Which Tools Are Checked
 

@@ -74,7 +74,7 @@ npm_user_bin() {
 
 prepend_path_dir "$(npm_user_bin)"
 
-AI_CLI_UPDATE_TOOLS=(claude gh_cli copilot antigravity codex pi pi_vs_claude_code hermes)
+AI_CLI_UPDATE_TOOLS=(claude gh_cli copilot antigravity codex pi pi_vs_claude_code hermes omx)
 AI_CLI_USAGE_TOOLS=(claude codex antigravity copilot)
 
 ai_cli_data_dir() {
@@ -165,6 +165,7 @@ ai_cli_tool_label() {
         pi)      printf 'Pi Coding Agent' ;;
         pi_vs_claude_code) printf 'Pi vs Claude Code' ;;
         hermes)  printf 'Hermes Agent' ;;
+        omx)     printf 'Oh My Codex' ;;
         *)       printf '%s' "$1" ;;
     esac
 }
@@ -689,7 +690,7 @@ ensure_update_dependencies() {
 
     ensure_command_dependency python3 python3 "Python 3" || failed=true
 
-    if ai_cli_enabled update claude || ai_cli_enabled update antigravity || ai_cli_enabled update hermes; then
+    if ai_cli_enabled update claude || ai_cli_enabled update antigravity || ai_cli_enabled update hermes || ai_cli_enabled update omx; then
         ensure_command_dependency curl curl "curl" || failed=true
         checked=true
     fi
@@ -699,7 +700,7 @@ ensure_update_dependencies() {
         checked=true
     fi
 
-    if ai_cli_enabled update codex || ai_cli_enabled update pi; then
+    if ai_cli_enabled update codex || ai_cli_enabled update pi || ai_cli_enabled update omx; then
         ensure_command_dependency npm npm "Node.js/npm" || failed=true
         checked=true
     fi
@@ -993,6 +994,40 @@ doctor_check_npm_handoffs() {
     echo -e "${GREEN}  npm package handoffs checked.${NC}"
 }
 
+doctor_check_omx() {
+    if ! ai_cli_enabled update omx; then
+        return 0
+    fi
+
+    echo -e "${CYAN}==> Checking Oh My Codex...${NC}"
+
+    if ! command -v omx >/dev/null 2>&1; then
+        echo -e "${YELLOW}  ⚠ omx not found${NC}"
+        if command -v npm >/dev/null 2>&1; then
+            echo -e "${YELLOW}    Install with: npm install -g oh-my-codex${NC}"
+        fi
+        return 0
+    fi
+
+    local ver
+    ver=$(omx --version 2>/dev/null | head -1 || true)
+    if [[ -n "$ver" ]]; then
+        echo -e "${GREEN}  ✓ Oh My Codex: $ver${NC}"
+    else
+        echo -e "${GREEN}  ✓ Oh My Codex: installed${NC}"
+    fi
+
+    if $VERBOSE; then
+        omx doctor 2>&1 || {
+            echo -e "${YELLOW}  ⚠ omx doctor reported issues${NC}"
+        }
+    else
+        omx doctor >/dev/null 2>&1 || {
+            echo -e "${YELLOW}  ⚠ omx doctor reported issues; run 'omx doctor' for details.${NC}"
+        }
+    fi
+}
+
 do_doctor() {
     local failed=false
 
@@ -1001,6 +1036,8 @@ do_doctor() {
     ensure_update_dependencies || failed=true
     echo ""
     doctor_check_npm_handoffs || failed=true
+    echo ""
+    doctor_check_omx || failed=true
 
     echo ""
     if $failed; then
@@ -1445,6 +1482,21 @@ check_hermes() {
         echo -e "${GREEN}  Already up to date (${current})${NC}"
     else
         echo -e "${GREEN}  Update check complete${NC}"
+    fi
+}
+
+check_omx() {
+    echo -e "${CYAN}==> Checking Oh My Codex...${NC}"
+    check_npm_package "Oh My Codex" "oh-my-codex" "omx"
+
+    if command -v omx >/dev/null 2>&1; then
+        if $VERBOSE; then
+            omx doctor 2>&1 || true
+        else
+            omx doctor >/dev/null 2>&1 || {
+                echo -e "${YELLOW}  omx doctor reported issues; run 'omx doctor' for details.${NC}"
+            }
+        fi
     fi
 }
 
@@ -2402,6 +2454,7 @@ do_update() {
     run_selected_update pi check_npm_package "Pi Coding Agent" "@earendil-works/pi-coding-agent" "pi" "@mariozechner/pi-coding-agent"
     run_selected_update pi_vs_claude_code check_pi_vs_claude_code
     run_selected_update hermes check_hermes
+    run_selected_update omx check_omx
 
     if ! $update_ran; then
         echo -e "${YELLOW}No update tools selected. Run 'ai setup' to choose tools.${NC}"
