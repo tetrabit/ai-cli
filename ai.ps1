@@ -620,8 +620,40 @@ switch ($Tool) {
             if ($ran) { Write-Host "" }
             Write-Host "==> Antigravity CLI..." -ForegroundColor Cyan
             if (Get-Command agy -ErrorAction SilentlyContinue) {
-                Write-Host "  ai-cli has no supported noninteractive Antigravity quota API." -ForegroundColor Yellow
-                Write-Host "  Open Antigravity settings to check remaining usage and rate limits." -ForegroundColor Yellow
+                $logPath = [System.IO.Path]::GetTempFileName()
+                try {
+                    $stdoutPath = [System.IO.Path]::GetTempFileName()
+                    $stderrPath = [System.IO.Path]::GetTempFileName()
+                    $process = Start-Process -FilePath "agy" -ArgumentList @("--print", "/quota", "--print-timeout", "45s", "--log-file", $logPath) -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+                    $stdoutText = ""
+                    $combined = ""
+                    if (Test-Path $stdoutPath) {
+                        $stdoutText = Get-Content -Raw -ErrorAction SilentlyContinue $stdoutPath
+                        $combined += $stdoutText
+                    }
+                    if (Test-Path $stderrPath) { $combined += "`n" + (Get-Content -Raw -ErrorAction SilentlyContinue $stderrPath) }
+                    if (Test-Path $logPath) { $combined += "`n" + (Get-Content -Raw -ErrorAction SilentlyContinue $logPath) }
+
+                    if ($combined -match "RESOURCE_EXHAUSTED[^\n.]*?(?:\. [^\n.]*?)*?Resets in ([0-9dhms ]+)") {
+                        Write-Host "  Antigravity quota exhausted; resets in $($Matches[1].Trim())" -ForegroundColor Yellow
+                    } elseif ($combined -match "You are not logged into Antigravity") {
+                        Write-Host "  Usage unavailable (not logged into Antigravity)" -ForegroundColor Yellow
+                    } elseif ($stdoutText.Trim()) {
+                        $stdoutText -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object {
+                            Write-Host "  $($_.Trim())" -ForegroundColor Yellow
+                        }
+                    } else {
+                        Write-Host "  Usage unavailable (Antigravity returned no quota details)" -ForegroundColor Yellow
+                    }
+                } catch {
+                    Write-Host "  Usage unavailable (Antigravity quota check failed)" -ForegroundColor Yellow
+                } finally {
+                    foreach ($path in @($logPath, $stdoutPath, $stderrPath)) {
+                        if ($path -and (Test-Path $path)) {
+                            Remove-Item -Force -ErrorAction SilentlyContinue $path
+                        }
+                    }
+                }
             } else {
                 Write-Host "  Usage unavailable (Antigravity CLI not installed)" -ForegroundColor Yellow
             }

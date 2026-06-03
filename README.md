@@ -130,7 +130,7 @@ Shows remaining usage as percentage bars or instruction guidelines for the selec
 
 - **Claude Code:** 5-hour and 7-day limits (Linux/macOS)
 - **Codex CLI:** 5-hour and 7-day limits (Linux/macOS)
-- **Antigravity CLI:** Guidance-only status. ai-cli has no supported noninteractive Antigravity quota API, so it does not read Gemini CLI credentials, scrape OAuth tokens, or call Google Cloud Code quota endpoints. Check Antigravity settings for current quota and account status.
+- **Antigravity CLI:** Antigravity-backed quota on Linux when the Antigravity keyring item is available, with an `agy /quota` log fallback for exhausted/reset status. It does not read Gemini CLI credential files or scrape OAuth tokens from npm bundles.
 - **GitHub Copilot CLI:** Premium request quota (Linux/macOS)
 
 Example output:
@@ -145,7 +145,8 @@ Example output:
   7d limit           [###########---------]   55.0% left  resets 2026-03-18 11:15
 
 ==> Antigravity CLI...
-  Usage guidance only. Check Antigravity settings for quota and account status.
+  Gemini 3.5 Flash (High) [###################-]   93.8% left  resets 2026-06-04 18:08
+  Gemini 3.5 Flash (Medium) [####################]   98.1% left  resets 2026-06-04 18:08
 
 ==> GitHub Copilot CLI...
   premium interactions [############--------]   60.6% left  resets 2026-03-12 16:29
