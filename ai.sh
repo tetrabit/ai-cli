@@ -2162,6 +2162,7 @@ def parse_usage(text):
     lines = [clean_line(line) for line in text.splitlines()]
     rows = []
     seen = set()
+    model_header = re.compile(r"^(Gemini|Claude|GPT-)")
     for idx, line in enumerate(lines):
         if not line or line in seen:
             continue
@@ -2169,11 +2170,17 @@ def parse_usage(text):
             continue
         if "%" in line or line in ("Model Quota", "Quota available"):
             continue
-        if not re.match(r"^(Gemini|Claude|GPT-)", line):
+        if not model_header.match(line):
             continue
         percent = None
         reset_at = "__EMPTY__"
-        for look_ahead in lines[idx + 1 : idx + 5]:
+        block = []
+        for look_ahead in lines[idx + 1 :]:
+            if model_header.match(look_ahead):
+                break
+            block.append(look_ahead)
+
+        for look_ahead in block:
             pct_match = re.search(r"([0-9]+(?:\.[0-9]+)?)%", look_ahead)
             if pct_match:
                 percent = float(pct_match.group(1))
@@ -2181,10 +2188,6 @@ def parse_usage(text):
             refresh_match = re.search(r"Refreshes in ([A-Za-z0-9 ]+)", look_ahead)
             if refresh_match:
                 reset_at = f"in {refresh_match.group(1).strip()}"
-                break
-            if look_ahead == "Quota available":
-                reset_at = "__EMPTY__"
-                break
         if percent is None:
             continue
         rows.append((line, percent, reset_at))

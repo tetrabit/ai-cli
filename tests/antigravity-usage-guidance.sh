@@ -115,6 +115,7 @@ usage_fixture="$(
   Claude Sonnet 4.6 (Thinking)
   bars 100%
   Quota available
+  Refreshes in 4h 42m
 
   Claude Opus 4.6 (Thinking)
   bars 100%
@@ -163,6 +164,11 @@ fi
 
 if ! grep -q 'Claude Sonnet 4.6 (Thinking).*100.0% left' "$enabled_output"; then
     echo "Antigravity did not parse the real /usage quota-available row" >&2
+    exit 1
+fi
+
+if ! grep -q 'Claude Sonnet 4.6 (Thinking).*100.0% left  resets in 4h 42m' "$enabled_output"; then
+    echo "Antigravity did not preserve refresh metadata for a nonempty row" >&2
     exit 1
 fi
 
