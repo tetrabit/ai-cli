@@ -18,10 +18,11 @@ check_absent() {
     rm -f /tmp/ai-cli-antigravity-regression-match.$$
 }
 
-for file in ai.sh ai.ps1; do
+for file in ai.sh; do
     check_absent "$file" '\.gemini|oauth_creds\.json|@google/gemini-cli' 'Gemini CLI credential reads'
     check_absent "$file" 'get_oauth_credentials|oauth2\.googleapis\.com/token' 'Gemini OAuth scraping or token refresh'
     check_absent "$file" 'no supported noninteractive Antigravity quota API|Check Antigravity settings for quota' 'rejected guidance-only Antigravity wording'
+    check_absent "$file" 'daily-cloudcode-pa\.googleapis\.com|loadCodeAssist|retrieveUserQuota|pluginType|secret-tool' 'non-usage Antigravity quota shortcut'
 done
 
 if (( failures > 0 )); then
@@ -30,14 +31,14 @@ if (( failures > 0 )); then
     exit 1
 fi
 
-if ! grep -Eq 'secret-tool", "lookup", "service", "gemini", "username", "antigravity"|service", "gemini", "username", "antigravity"' "$repo_root/ai.sh"; then
-    printf 'Antigravity Bash usage no longer reads the Antigravity keyring item\n' >&2
+if [[ -e "$repo_root/ai.ps1" ]]; then
+    printf 'PowerShell script should not exist after Windows support removal\n' >&2
     exit 1
 fi
 
-if ! grep -q 'daily-cloudcode-pa.googleapis.com' "$repo_root/ai.sh"; then
-    printf 'Antigravity Bash usage no longer targets the current Antigravity quota host\n' >&2
+if ! grep -q 'AI_CLI_ANTIGRAVITY_USAGE_TEXT' "$repo_root/ai.sh"; then
+    printf 'Antigravity usage parser test seam is missing\n' >&2
     exit 1
 fi
 
-printf 'Antigravity quota regression guard passed\n'
+printf 'Antigravity /usage regression guard passed\n'

@@ -48,7 +48,7 @@ remote_source_path() {
 }
 
 local_sources_available() {
-    [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.sh" && -f "$SCRIPT_DIR/ai.ps1" ]]
+    [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/ai.sh" ]]
 }
 
 should_use_local_sources() {
@@ -60,14 +60,6 @@ linux_source_path() {
         printf '%s\n' "$SCRIPT_DIR/ai.sh"
     else
         remote_source_path "ai.sh"
-    fi
-}
-
-windows_source_path() {
-    if should_use_local_sources && [[ -f "$SCRIPT_DIR/ai.ps1" ]]; then
-        printf '%s\n' "$SCRIPT_DIR/ai.ps1"
-    else
-        remote_source_path "ai.ps1"
     fi
 }
 
@@ -280,36 +272,6 @@ ensure_unix_dependencies() {
     echo "Dependencies ready."
 }
 
-ensure_windows_command_dependency() {
-    local command_name="$1"
-    local package_id="$2"
-    local display_name="$3"
-
-    if command -v "$command_name" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if ! command -v winget >/dev/null 2>&1; then
-        echo "$display_name is missing and winget was not found."
-        return 1
-    fi
-
-    echo "$display_name is missing, installing..."
-    winget install --id "$package_id" --exact --silent --accept-package-agreements --accept-source-agreements
-    command -v "$command_name" >/dev/null 2>&1
-}
-
-ensure_windows_dependencies() {
-    echo "Checking ai-cli dependencies..."
-    ensure_windows_command_dependency git Git.Git "Git"
-    ensure_windows_command_dependency node OpenJS.NodeJS.LTS "Node.js"
-    ensure_windows_command_dependency npm OpenJS.NodeJS.LTS "npm"
-    ensure_windows_command_dependency gh GitHub.cli "GitHub CLI"
-    ensure_windows_command_dependency bun Oven-sh.Bun "Bun"
-    ensure_windows_command_dependency just Casey.Just "just" || true
-    echo "Dependencies ready."
-}
-
 install_file() {
     local source="$1"
     local dest="$2"
@@ -389,33 +351,6 @@ case "$(uname -s)" in
         fi
 
         echo "Installed successfully. Run 'ai' to get started."
-        ;;
-    MINGW*|MSYS*|CYGWIN*|Windows_NT*)
-        INSTALL_DIR="${AI_CLI_WINDOWS_INSTALL_DIR:-C:\\tools}"
-        SOURCE_PATH="$(windows_source_path)"
-        TARGET_PATH="$(cygpath "$INSTALL_DIR/ai.ps1" 2>/dev/null || echo "/c/tools/ai.ps1")"
-        echo "Detected: Windows"
-        ensure_windows_dependencies
-        echo "Installing ai.ps1 -> $INSTALL_DIR\\ai.ps1"
-
-        mkdir -p "$(cygpath "$INSTALL_DIR" 2>/dev/null || echo "/c/tools")"
-        if [[ -f "$SOURCE_PATH" ]]; then
-            echo "Installing from local source: $SOURCE_PATH"
-            cp "$SOURCE_PATH" "$TARGET_PATH"
-        else
-            echo "Downloading from: $SOURCE_PATH"
-            curl -fsSL "${SOURCE_PATH}?$(date +%s)" -o "$TARGET_PATH"
-        fi
-
-        # Create ai.cmd wrapper if it doesn't exist
-        CMD_PATH="$(cygpath "$INSTALL_DIR/ai.cmd" 2>/dev/null || echo "/c/tools/ai.cmd")"
-        if [ ! -f "$CMD_PATH" ]; then
-            printf '@powershell -NoProfile -ExecutionPolicy Bypass -File "%%~dp0ai.ps1" %%*\r\n' > "$CMD_PATH"
-            echo "Created ai.cmd wrapper."
-        fi
-
-        echo "Installed successfully."
-        echo "Make sure $INSTALL_DIR is in your PATH, then run 'ai' to get started."
         ;;
     *)
         echo "Unsupported OS: $(uname -s)"

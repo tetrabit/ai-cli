@@ -2079,192 +2079,114 @@ usage_antigravity() {
     fi
 
     if ! output=$(python3 <<'PY' 2>/dev/null
-import json
 import os
 import re
 import subprocess
 import sys
-import tempfile
-import urllib.error
-import urllib.request
-from datetime import datetime
-
-MODEL_MAP = {
-    "gemini-2.5-flash": "Gemini 3.5 Flash (High)",
-    "gemini-2.5-flash-lite": "Gemini 3.5 Flash (Medium)",
-    "gemini-2.5-pro": "Gemini 3.1 Pro (High)",
-    "gemini-3-flash-preview": "Gemini 3.1 Pro (Low)",
-    "gemini-3-pro-preview": "Claude Sonnet 4.6 (Thinking)",
-    "gemini-3.1-flash-lite": "Claude Opus 4.6 (Thinking)",
-    "gemini-3.1-pro-preview": "GPT-OSS 120B (Medium)",
-}
-
-API_BASE = os.environ.get("AI_CLI_ANTIGRAVITY_API_BASE", "https://daily-cloudcode-pa.googleapis.com").rstrip("/")
-
-
-def fmt_reset(value):
-    if not value:
-        return ""
-    try:
-        value = value.replace("Z", "+00:00")
-        reset_at = datetime.fromisoformat(value).astimezone()
-        delta_seconds = max(0, int((reset_at - datetime.now(reset_at.tzinfo)).total_seconds()))
-        days = delta_seconds // 86400
-        hours = (delta_seconds % 86400) // 3600
-        minutes = (delta_seconds % 3600) // 60
-        if days:
-            delta_text = f"{days}d {hours}h"
-        elif hours:
-            delta_text = f"{hours}h {minutes}m"
-        else:
-            delta_text = f"{minutes}m"
-        return f"{reset_at.strftime('%Y-%m-%d %H:%M')} ({delta_text})"
-    except Exception:
-        return value
+import time
 
 
 def print_text(message):
     print(f"__TEXT__\t{message}\t__EMPTY__")
 
 
-def post(endpoint, token, body):
-    request = urllib.request.Request(
-        f"{API_BASE}/v1internal:{endpoint}",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+def capture_usage_text():
+    if os.environ.get("AI_CLI_ANTIGRAVITY_USAGE_TEXT"):
+        return os.environ["AI_CLI_ANTIGRAVITY_USAGE_TEXT"]
+    if os.environ.get("AI_CLI_ANTIGRAVITY_USAGE_FILE"):
+        with open(os.environ["AI_CLI_ANTIGRAVITY_USAGE_FILE"], encoding="utf-8", errors="ignore") as handle:
+            return handle.read()
 
-
-def get_antigravity_keyring_token():
-    if os.environ.get("AI_CLI_ANTIGRAVITY_ACCESS_TOKEN"):
-        return os.environ["AI_CLI_ANTIGRAVITY_ACCESS_TOKEN"]
+    session = f"ai_cli_agy_usage_{os.getpid()}"
+    start_delay = float(os.environ.get("AI_CLI_ANTIGRAVITY_TMUX_START_DELAY", "5"))
+    usage_delay = float(os.environ.get("AI_CLI_ANTIGRAVITY_TMUX_USAGE_DELAY", "8"))
     try:
-        result = subprocess.run(
-            ["secret-tool", "lookup", "service", "gemini", "username", "antigravity"],
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", session, "-x", "140", "-y", "60", "agy --dangerously-skip-permissions"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
+            check=True,
         )
-    except Exception:
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    try:
-        data = json.loads(result.stdout)
-    except Exception:
-        return None
-    token = data.get("token") if isinstance(data, dict) else None
-    if isinstance(token, dict):
-        return token.get("access_token")
-    return None
-
-
-def quota_from_api():
-    token = get_antigravity_keyring_token()
-    if not token:
-        return False
-    load = post(
-        "loadCodeAssist",
-        token,
-        {
-            "cloudaicompanionProject": None,
-            "metadata": {
-                "ideType": "IDE_UNSPECIFIED",
-                "platform": "PLATFORM_UNSPECIFIED",
-                # Antigravity's current quota service still accepts the Gemini enum.
-                # The credential source above is the Antigravity keyring item, not Gemini CLI files.
-                "pluginType": "GEMINI",
-            },
-        },
-    )
-    project = load.get("cloudaicompanionProject")
-    if not project:
-        return False
-    quota = post("retrieveUserQuota", token, {"project": project})
-    buckets = quota.get("buckets") or []
-    buckets_by_model = {bucket.get("modelId"): bucket for bucket in buckets if bucket.get("modelId")}
-    rows = []
-    for api_id, display_name in MODEL_MAP.items():
-        bucket = buckets_by_model.get(api_id)
-        if not bucket:
-            continue
-        fraction = bucket.get("remainingFraction")
-        if fraction is None:
-            continue
-        percent = float(fraction)
-        if percent <= 1.0:
-            percent *= 100.0
-        rows.append((display_name, percent, fmt_reset(bucket.get("resetTime")) or "__EMPTY__"))
-    if not rows:
-        return False
-    for label, percent, reset_at in rows:
-        print(f"{label}\t{percent:.1f}\t{reset_at}")
-    return True
-
-
-def status_from_agy():
-    with tempfile.NamedTemporaryFile(prefix="ai-cli-agy-quota.", suffix=".log", delete=False) as handle:
-        log_path = handle.name
-    try:
-        result = subprocess.run(
-            ["agy", "--print", "/quota", "--print-timeout", "45s", "--log-file", log_path],
+        time.sleep(start_delay)
+        subprocess.run(["tmux", "send-keys", "-t", session, "/usage", "Enter"], timeout=10, check=True)
+        time.sleep(usage_delay)
+        captured = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", session, "-S", "-300"],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=10,
+            check=True,
         )
-        combined = "\n".join(
-            part for part in (result.stdout, result.stderr, open(log_path, errors="ignore").read()) if part
-        )
-    except Exception as exc:
-        print_text(f"Usage unavailable (Antigravity quota check failed: {exc.__class__.__name__})")
-        return True
+        return captured.stdout
     finally:
         try:
-            os.unlink(log_path)
+            subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True, timeout=5)
         except Exception:
             pass
 
-    exhausted = re.search(r"RESOURCE_EXHAUSTED[^\n.]*?(?:\. [^\n.]*?)*?Resets in ([0-9dhms ]+)", combined)
-    if exhausted:
-        print_text(f"Antigravity quota exhausted; resets in {exhausted.group(1).strip()}")
-        return True
-    login = re.search(r"You are not logged into Antigravity", combined)
-    if login:
-        print_text("Usage unavailable (not logged into Antigravity)")
-        return True
-    if result.stdout.strip():
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if line:
-                print_text(line)
-        return True
-    print_text("Usage unavailable (Antigravity returned no quota details)")
-    return True
+
+def clean_line(line):
+    line = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", line)
+    return line.strip()
+
+
+def parse_usage(text):
+    lines = [clean_line(line) for line in text.splitlines()]
+    rows = []
+    seen = set()
+    for idx, line in enumerate(lines):
+        if not line or line in seen:
+            continue
+        if line.startswith((">", "└", "↑/", "esc ", "(", "Antigravity CLI")):
+            continue
+        if "%" in line or line in ("Model Quota", "Quota available"):
+            continue
+        if not re.match(r"^(Gemini|Claude|GPT-)", line):
+            continue
+        percent = None
+        reset_at = "__EMPTY__"
+        for look_ahead in lines[idx + 1 : idx + 5]:
+            pct_match = re.search(r"([0-9]+(?:\.[0-9]+)?)%", look_ahead)
+            if pct_match:
+                percent = float(pct_match.group(1))
+                continue
+            refresh_match = re.search(r"Refreshes in ([A-Za-z0-9 ]+)", look_ahead)
+            if refresh_match:
+                reset_at = f"in {refresh_match.group(1).strip()}"
+                break
+            if look_ahead == "Quota available":
+                reset_at = "__EMPTY__"
+                break
+        if percent is None:
+            continue
+        rows.append((line, percent, reset_at))
+        seen.add(line)
+    return rows
 
 
 try:
-    if quota_from_api():
-        sys.exit(0)
-except urllib.error.HTTPError as exc:
-    if exc.code == 429:
-        try:
-            body = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            body = ""
-        match = re.search(r"Resets in ([0-9dhms ]+)", body)
-        if match:
-            print_text(f"Antigravity quota exhausted; resets in {match.group(1).strip()}")
-            sys.exit(0)
-except Exception:
-    pass
+    usage_text = capture_usage_text()
+except FileNotFoundError:
+    print_text("Usage unavailable (tmux is required to read Antigravity /usage)")
+    sys.exit(0)
+except subprocess.CalledProcessError:
+    print_text("Usage unavailable (Antigravity /usage capture failed)")
+    sys.exit(0)
+except Exception as exc:
+    print_text(f"Usage unavailable (Antigravity /usage capture failed: {exc.__class__.__name__})")
+    sys.exit(0)
 
-status_from_agy()
+rows = parse_usage(usage_text)
+if not rows:
+    if "You are not logged into Antigravity" in usage_text:
+        print_text("Usage unavailable (not logged into Antigravity)")
+        sys.exit(0)
+    print_text("Usage unavailable (Antigravity /usage returned no quota rows)")
+    sys.exit(0)
+
+for label, percent, reset_at in rows:
+    print(f"{label}\t{percent:.1f}\t{reset_at}")
 PY
     ); then
         echo -e "${YELLOW}  Usage unavailable${NC}"
