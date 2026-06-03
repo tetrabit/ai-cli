@@ -2098,19 +2098,11 @@ def capture_usage_text():
             return handle.read()
 
     session = f"ai_cli_agy_usage_{os.getpid()}"
-    start_delay = float(os.environ.get("AI_CLI_ANTIGRAVITY_TMUX_START_DELAY", "5"))
-    usage_delay = float(os.environ.get("AI_CLI_ANTIGRAVITY_TMUX_USAGE_DELAY", "8"))
-    try:
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", session, "-x", "140", "-y", "60", "agy --dangerously-skip-permissions"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        )
-        time.sleep(start_delay)
-        subprocess.run(["tmux", "send-keys", "-t", session, "/usage", "Enter"], timeout=10, check=True)
-        time.sleep(usage_delay)
+    prompt_timeout = float(os.environ.get("AI_CLI_ANTIGRAVITY_PROMPT_TIMEOUT", "8"))
+    usage_timeout = float(os.environ.get("AI_CLI_ANTIGRAVITY_USAGE_TIMEOUT", "10"))
+    poll_interval = float(os.environ.get("AI_CLI_ANTIGRAVITY_POLL_INTERVAL", "0.25"))
+
+    def capture_pane():
         captured = subprocess.run(
             ["tmux", "capture-pane", "-p", "-t", session, "-S", "-300"],
             capture_output=True,
@@ -2119,6 +2111,41 @@ def capture_usage_text():
             check=True,
         )
         return captured.stdout
+
+    def prompt_ready(text):
+        return any(line.strip() == ">" for line in text.splitlines())
+
+    def usage_ready(text):
+        return "Model Quota" in text and ("Refreshes in" in text or "Quota available" in text)
+
+    try:
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", session, "-x", "140", "-y", "60", "agy --dangerously-skip-permissions"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+
+        deadline = time.monotonic() + prompt_timeout
+        pane = ""
+        while time.monotonic() < deadline:
+            pane = capture_pane()
+            if prompt_ready(pane):
+                break
+            time.sleep(poll_interval)
+        else:
+            return pane
+
+        subprocess.run(["tmux", "send-keys", "-t", session, "/usage", "Enter"], timeout=10, check=True)
+
+        deadline = time.monotonic() + usage_timeout
+        while time.monotonic() < deadline:
+            pane = capture_pane()
+            if usage_ready(pane):
+                return pane
+            time.sleep(poll_interval)
+        return capture_pane()
     finally:
         try:
             subprocess.run(["tmux", "kill-session", "-t", session], capture_output=True, timeout=5)

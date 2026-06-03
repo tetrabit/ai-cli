@@ -19,6 +19,39 @@ exit 1
 FAKE_AGY
 chmod +x "$fake_bin/agy"
 
+cat > "$fake_bin/tmux" <<'FAKE_TMUX'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+    new-session)
+        : > "$HOME/tmux-capture-count"
+        ;;
+    send-keys)
+        printf '%s\n' "$*" > "$HOME/tmux-send-keys"
+        ;;
+    capture-pane)
+        count=0
+        if [[ -f "$HOME/tmux-capture-count" ]]; then
+            count="$(cat "$HOME/tmux-capture-count")"
+        fi
+        count=$((count + 1))
+        printf '%s\n' "$count" > "$HOME/tmux-capture-count"
+        if (( count == 1 )); then
+            printf '>\n'
+        else
+            cat "$HOME/tmux-usage-fixture"
+        fi
+        ;;
+    kill-session)
+        ;;
+    *)
+        printf 'unexpected tmux command: %s\n' "$*" >&2
+        exit 1
+        ;;
+esac
+FAKE_TMUX
+chmod +x "$fake_bin/tmux"
+
 write_config() {
     local config="$1"
     shift
@@ -42,9 +75,15 @@ run_usage() {
         export PATH="$path"
         export HOME="$tmp_home"
         export AI_CLI_CONFIG="$config"
-        if [[ -n "${AI_CLI_ANTIGRAVITY_USAGE_TEXT:-}" ]]; then
-            export AI_CLI_ANTIGRAVITY_USAGE_TEXT
-        fi
+        for name in \
+            AI_CLI_ANTIGRAVITY_USAGE_TEXT \
+            AI_CLI_ANTIGRAVITY_PROMPT_TIMEOUT \
+            AI_CLI_ANTIGRAVITY_USAGE_TIMEOUT \
+            AI_CLI_ANTIGRAVITY_POLL_INTERVAL; do
+            if [[ -n "${!name:-}" ]]; then
+                export "$name"
+            fi
+        done
         bash "$repo_root/ai.sh" usage > "$output"
     )
 }
@@ -86,6 +125,25 @@ usage_fixture="$(
   Quota available
 USAGE
 )"
+printf '%s\n' "$usage_fixture" > "$tmp_home/tmux-usage-fixture"
+
+tmux_config="$tmp_home/tmux-config"
+tmux_output="$tmp_home/tmux-output.txt"
+write_config "$tmux_config" "USAGE_ANTIGRAVITY=1"
+AI_CLI_ANTIGRAVITY_PROMPT_TIMEOUT="1" \
+AI_CLI_ANTIGRAVITY_USAGE_TIMEOUT="1" \
+AI_CLI_ANTIGRAVITY_POLL_INTERVAL="0.01" \
+run_usage "$tmux_config" "$fake_bin:/usr/bin:/bin" "$tmux_output"
+
+if ! grep -q 'Gemini 3.5 Flash (Medium).*0.0% left  resets in 24m' "$tmux_output"; then
+    echo "Antigravity tmux capture did not parse the /usage refresh row" >&2
+    exit 1
+fi
+
+if ! grep -q '/usage' "$tmp_home/tmux-send-keys"; then
+    echo "Antigravity tmux capture did not send /usage" >&2
+    exit 1
+fi
 
 enabled_config="$tmp_home/enabled-config"
 enabled_output="$tmp_home/enabled-output.txt"
