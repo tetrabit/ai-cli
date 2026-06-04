@@ -2184,7 +2184,6 @@ def parse_usage(text):
             pct_match = re.search(r"([0-9]+(?:\.[0-9]+)?)%", look_ahead)
             if pct_match:
                 percent = float(pct_match.group(1))
-                continue
             refresh_match = re.search(r"Refreshes in ([A-Za-z0-9 ]+)", look_ahead)
             if refresh_match:
                 reset_at = f"in {refresh_match.group(1).strip()}"

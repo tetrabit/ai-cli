@@ -93,8 +93,8 @@ usage_fixture="$(
 └ Model Quota
 
   Gemini 3.5 Flash (Medium)
-  bars 0%
-  Refreshes in 24m
+  bars 40%
+  40% remaining · Refreshes in 4h 42m
 
   Gemini 3.5 Flash (High)
   bars 0%
@@ -136,7 +136,7 @@ AI_CLI_ANTIGRAVITY_USAGE_TIMEOUT="1" \
 AI_CLI_ANTIGRAVITY_POLL_INTERVAL="0.01" \
 run_usage "$tmux_config" "$fake_bin:/usr/bin:/bin" "$tmux_output"
 
-if ! grep -q 'Gemini 3.5 Flash (Medium).*0.0% left  resets in 24m' "$tmux_output"; then
+if ! grep -q 'Gemini 3.5 Flash (Medium).*40.0% left  resets in 4h 42m' "$tmux_output"; then
     echo "Antigravity tmux capture did not parse the /usage refresh row" >&2
     exit 1
 fi
@@ -157,8 +157,8 @@ if ! grep -q '==> Antigravity CLI' "$enabled_output"; then
     exit 1
 fi
 
-if ! grep -q 'Gemini 3.5 Flash (Medium).*0.0% left  resets in 24m' "$enabled_output"; then
-    echo "Antigravity did not parse the real /usage refresh row" >&2
+if ! grep -q 'Gemini 3.5 Flash (Medium).*40.0% left  resets in 4h 42m' "$enabled_output"; then
+    echo "Antigravity did not parse the real /usage mixed percent and refresh row" >&2
     exit 1
 fi
 
@@ -218,7 +218,7 @@ if ! grep -q '==> Antigravity CLI' "$legacy_disabled_output"; then
     exit 1
 fi
 
-if ! grep -q 'Gemini 3.5 Flash (Medium).*0.0% left  resets in 24m' "$legacy_disabled_output"; then
+if ! grep -q 'Gemini 3.5 Flash (Medium).*40.0% left  resets in 4h 42m' "$legacy_disabled_output"; then
     echo "Antigravity did not use its own default enablement without USAGE_ANTIGRAVITY" >&2
     exit 1
 fi
