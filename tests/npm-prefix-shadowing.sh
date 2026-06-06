@@ -84,6 +84,7 @@ UPDATE_CODEX=1
 UPDATE_PI=0
 UPDATE_PI_VS_CLAUDE_CODE=0
 UPDATE_HERMES=0
+UPDATE_OMX=0
 CONFIG
 
 PATH="$fake_bin:$tmp_home/.local/bin:$tmp_home/.npm-global/bin:/usr/bin:/bin" \

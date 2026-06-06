@@ -477,8 +477,41 @@ ai_cli_skip_dependency_install() {
     [[ "${AI_CLI_SKIP_DEPENDENCY_INSTALL:-0}" == "1" ]]
 }
 
+ai_cli_os_release_file() {
+    printf '%s\n' "${AI_CLI_OS_RELEASE:-/etc/os-release}"
+}
+
+ai_cli_is_bazzite() {
+    local os_release
+
+    os_release="$(ai_cli_os_release_file)"
+    [[ -f "$os_release" ]] || return 1
+    (
+        # shellcheck source=/dev/null
+        . "$os_release"
+        [[ "${ID:-}" == "bazzite" ]]
+    )
+}
+
+ai_cli_ensure_bazzite_brew_path() {
+    if [[ -n "${AI_CLI_BAZZITE_BREW_BIN:-}" ]]; then
+        prepend_path_dir "$AI_CLI_BAZZITE_BREW_BIN"
+        return
+    fi
+
+    prepend_path_dir "/home/linuxbrew/.linuxbrew/bin"
+    prepend_path_dir "$HOME/.linuxbrew/bin"
+}
+
 ai_cli_package_manager() {
-    if command -v pacman >/dev/null 2>&1; then
+    if ai_cli_is_bazzite; then
+        ai_cli_ensure_bazzite_brew_path
+        if command -v brew >/dev/null 2>&1; then
+            printf 'bazzite-brew\n'
+        else
+            printf 'bazzite\n'
+        fi
+    elif command -v pacman >/dev/null 2>&1; then
         printf 'pacman\n'
     elif command -v apt-get >/dev/null 2>&1; then
         printf 'apt\n'
@@ -496,6 +529,13 @@ ai_cli_packages_for_dependency() {
     local dependency="$2"
 
     case "$manager:$dependency" in
+        bazzite-brew:curl) printf 'curl\n' ;;
+        bazzite-brew:git) printf 'git\n' ;;
+        bazzite-brew:python3) printf 'python\n' ;;
+        bazzite-brew:npm) printf 'node\n' ;;
+        bazzite-brew:gh) printf 'gh\n' ;;
+        bazzite-brew:unzip) printf 'unzip\n' ;;
+        bazzite-brew:just) printf 'just\n' ;;
         pacman:curl) printf 'curl\n' ;;
         pacman:git) printf 'git\n' ;;
         pacman:python3) printf 'python\n' ;;
@@ -541,6 +581,14 @@ ai_cli_install_packages() {
     fi
 
     case "$manager" in
+        bazzite-brew)
+            ai_cli_ensure_bazzite_brew_path
+            if $VERBOSE; then
+                brew install "${packages[@]}"
+            else
+                brew install "${packages[@]}" >/dev/null
+            fi
+            ;;
         pacman)
             prompt_for_sudo "install ${packages[*]}" || return 1
             if $VERBOSE; then
@@ -575,7 +623,13 @@ ai_cli_install_packages() {
             fi
             ;;
         *)
-            echo -e "${YELLOW}  No supported package manager found for ${packages[*]}.${NC}"
+            if [[ "$manager" == "bazzite" ]]; then
+                echo -e "${YELLOW}  Bazzite detected, but Homebrew was not found.${NC}"
+                echo -e "${YELLOW}  Install Homebrew from the Bazzite Portal or Bold Brew, then rerun this command.${NC}"
+                echo -e "${YELLOW}  ai-cli will not use rpm-ostree on Bazzite because package layering can interfere with Bazzite update checks.${NC}"
+            else
+                echo -e "${YELLOW}  No supported package manager found for ${packages[*]}.${NC}"
+            fi
             return 1
             ;;
     esac
@@ -1193,6 +1247,27 @@ check_gh_cli() {
     current=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
     if [[ -z "$current" ]]; then
         echo -e "${YELLOW}  Not installed${NC}"
+        return
+    fi
+
+    if ai_cli_is_bazzite; then
+        ai_cli_ensure_bazzite_brew_path
+        if command -v brew &>/dev/null; then
+            if $VERBOSE; then
+                brew upgrade gh 2>&1 || true
+            else
+                brew upgrade gh 2>&1 >/dev/null || true
+            fi
+            local new_ver
+            new_ver=$(gh --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+            if [[ "$current" == "$new_ver" ]]; then
+                echo -e "${GREEN}  Already up to date (${current})${NC}"
+            else
+                echo -e "${YELLOW}  Updated ${current} -> ${new_ver}${NC}"
+            fi
+        else
+            echo -e "${YELLOW}  Installed (${current}) — Bazzite Homebrew was not found, so gh was not upgraded.${NC}"
+        fi
         return
     fi
 

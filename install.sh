@@ -97,7 +97,14 @@ prompt_for_sudo() {
 }
 
 package_manager() {
-    if command -v pacman >/dev/null 2>&1; then
+    if is_bazzite; then
+        ensure_bazzite_brew_path
+        if command -v brew >/dev/null 2>&1; then
+            printf 'bazzite-brew\n'
+        else
+            printf 'bazzite\n'
+        fi
+    elif command -v pacman >/dev/null 2>&1; then
         printf 'pacman\n'
     elif command -v apt-get >/dev/null 2>&1; then
         printf 'apt\n'
@@ -110,11 +117,44 @@ package_manager() {
     fi
 }
 
+os_release_file() {
+    printf '%s\n' "${AI_CLI_OS_RELEASE:-/etc/os-release}"
+}
+
+is_bazzite() {
+    local os_release
+
+    os_release="$(os_release_file)"
+    [[ -f "$os_release" ]] || return 1
+    (
+        # shellcheck source=/dev/null
+        . "$os_release"
+        [[ "${ID:-}" == "bazzite" ]]
+    )
+}
+
+ensure_bazzite_brew_path() {
+    if [[ -n "${AI_CLI_BAZZITE_BREW_BIN:-}" ]]; then
+        prepend_path_dir "$AI_CLI_BAZZITE_BREW_BIN"
+        return
+    fi
+
+    prepend_path_dir "/home/linuxbrew/.linuxbrew/bin"
+    prepend_path_dir "$HOME/.linuxbrew/bin"
+}
+
 packages_for_dependency() {
     local manager="$1"
     local dependency="$2"
 
     case "$manager:$dependency" in
+        bazzite-brew:curl) printf 'curl\n' ;;
+        bazzite-brew:git) printf 'git\n' ;;
+        bazzite-brew:python3) printf 'python\n' ;;
+        bazzite-brew:npm) printf 'node\n' ;;
+        bazzite-brew:gh) printf 'gh\n' ;;
+        bazzite-brew:unzip) printf 'unzip\n' ;;
+        bazzite-brew:just) printf 'just\n' ;;
         pacman:curl) printf 'curl\n' ;;
         pacman:git) printf 'git\n' ;;
         pacman:python3) printf 'python\n' ;;
@@ -155,6 +195,10 @@ install_packages() {
     [[ ${#packages[@]} -gt 0 ]] || return 0
 
     case "$manager" in
+        bazzite-brew)
+            ensure_bazzite_brew_path
+            brew install "${packages[@]}" >/dev/null
+            ;;
         pacman)
             prompt_for_sudo "install ${packages[*]}" || return 1
             sudo pacman -Sy --noconfirm --needed "${packages[@]}" >/dev/null
@@ -172,7 +216,13 @@ install_packages() {
             brew install "${packages[@]}" >/dev/null
             ;;
         *)
-            echo "No supported package manager found for ${packages[*]}."
+            if [[ "$manager" == "bazzite" ]]; then
+                echo "Bazzite detected, but Homebrew was not found."
+                echo "Install Homebrew from the Bazzite Portal or Bold Brew, then rerun this installer."
+                echo "ai-cli will not use rpm-ostree on Bazzite because package layering can interfere with Bazzite update checks."
+            else
+                echo "No supported package manager found for ${packages[*]}."
+            fi
             return 1
             ;;
     esac
@@ -276,11 +326,15 @@ install_file() {
     local source="$1"
     local dest="$2"
     local mode="$3"
-    local dest_dir
+    local dest_dir parent
 
     dest_dir="$(dirname "$dest")"
     if [[ ! -d "$dest_dir" ]]; then
-        if [[ -w "$(dirname "$dest_dir")" ]]; then
+        parent="$dest_dir"
+        while [[ ! -d "$parent" && "$parent" != "/" ]]; do
+            parent="$(dirname "$parent")"
+        done
+        if [[ -d "$parent" && -w "$parent" ]]; then
             mkdir -p "$dest_dir"
         else
             prompt_for_sudo "create $dest_dir" || return 1
@@ -326,6 +380,9 @@ case "$(uname -s)" in
         elif [[ -n "$CURRENT_AI" ]]; then
             INSTALL_PATH="$CURRENT_AI"
             INSTALL_DIR="$(dirname "$INSTALL_PATH")"
+        elif is_bazzite; then
+            INSTALL_DIR="$HOME/.local/bin"
+            INSTALL_PATH="$INSTALL_DIR/ai"
         else
             INSTALL_DIR="/usr/local/bin"
             INSTALL_PATH="$INSTALL_DIR/ai"
@@ -336,6 +393,12 @@ case "$(uname -s)" in
         ensure_unix_dependencies
         echo "Installing ai -> $INSTALL_PATH"
         install_file "$SOURCE_PATH" "$INSTALL_PATH" 0755
+
+        if is_bazzite && [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+            echo ""
+            echo "NOTE: $INSTALL_DIR is not currently in PATH."
+            echo "Add it to your shell profile or set AI_CLI_INSTALL_DIR to a directory already on PATH."
+        fi
 
         # Check if there are other 'ai' binaries in PATH that might shadow this one
         ALL_AIS="$(which -a ai 2>/dev/null || true)"

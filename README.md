@@ -7,6 +7,7 @@ A single `ai` command to launch and update all your AI coding assistants.
 | Platform | Script | Status |
 |----------|--------|--------|
 | Linux | `ai.sh` | Tested |
+| Bazzite | `ai.sh` | Tested via Homebrew for CLI dependencies |
 | macOS | `ai.sh` | **Untested** — should work via Homebrew + npm, but has not been verified on a Mac. |
 
 ## Quick Install
@@ -42,6 +43,8 @@ ai update --verbose    # show full output from all tools
 
 Checks dependencies and each selected tool before installing updates. Missing dependencies are installed first when ai-cli knows how to install them for the current platform, including Bun for Pi vs Claude Code. If Antigravity CLI, Codex CLI, Pi Coding Agent, Hermes Agent, or Oh My Codex are missing, `ai update` installs them first. Codex, Pi, and Oh My Codex use npm; Antigravity uses the official Antigravity installer; Hermes uses the official Hermes installer. For npm tools, `ai update` prefers your configured user npm prefix when it lives under your home directory (for example `~/.npm-global`) and otherwise falls back to `~/.local`. It moves that prefix's `bin` directory to the front of the current update session, keeps the ai-cli managed shell PATH block pointed at the chosen prefix, and removes duplicate user-prefix installs of the same package that could shadow the upgraded binary.
 
+On Bazzite, ai-cli installs missing CLI dependencies with Homebrew and intentionally does not use `rpm-ostree` or `dnf`. This avoids package layering that can interfere with Bazzite and handheld daemon update checks. If Homebrew is not available, install it through the Bazzite Portal or Bold Brew before running ai-cli setup/update commands.
+
 `ai update` also installs or updates the Pi vs Claude Code harness from `https://github.com/disler/pi-vs-claude-code`. The checkout lives at `${XDG_DATA_HOME:-~/.local/share}/ai-cli/pi-vs-claude-code`, or `AI_CLI_PI_VS_CLAUDE_CODE_DIR` when set. Bun is required to install its dependencies, and `just` is required to use the bundled recipes.
 
 ## Repair Install Issues
@@ -55,7 +58,7 @@ Checks for common install breakage and fixes what it can. On Linux/macOS, `ai do
 | Tool | Linux | macOS |
 |------|-------|-------|
 | Claude Code | `npm install` when missing, otherwise `claude update` | `npm install` when missing, otherwise `claude update` |
-| GitHub CLI | `apt` / `dnf` | `brew upgrade gh` |
+| GitHub CLI | `apt` / `dnf`; Bazzite uses `brew upgrade gh` | `brew upgrade gh` |
 | GitHub Copilot CLI | `gh copilot update` | `gh copilot update` |
 | Antigravity CLI | official installer | official installer |
 | Codex CLI | npm version check | npm version check |
@@ -153,4 +156,5 @@ bash -n tests/antigravity-no-gemini-regression.sh
 ## Prerequisites
 
 - **Linux:** `apt`, `dnf`, or `pacman` is used to install missing system dependencies; Bun is installed with the [official Bun installer](https://bun.com/docs/installation).
+- **Bazzite:** Homebrew is used for missing CLI dependencies. `rpm-ostree` and `dnf` are not used by ai-cli on Bazzite.
 - **macOS:** [Homebrew](https://brew.sh/) is used to install missing system dependencies; Bun is installed with the [official Bun installer](https://bun.com/docs/installation).
