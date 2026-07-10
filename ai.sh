@@ -2238,34 +2238,79 @@ def parse_usage(text):
     rows = []
     seen = set()
     model_header = re.compile(r"^(Gemini|Claude|GPT-)")
+    
+    current_group = None
+    
     for idx, line in enumerate(lines):
         if not line or line in seen:
             continue
-        if line.startswith((">", "└", "↑/", "esc ", "(", "Antigravity CLI")):
+            
+        # New format: Groups
+        if line.endswith("MODELS"):
+            current_group = line.strip().title()
             continue
-        if "%" in line or line in ("Model Quota", "Quota available"):
+            
+        # New format: Limits
+        if current_group and line in ("Weekly Limit", "Five Hour Limit", "Daily Limit"):
+            limit_type = line
+            label = f"{current_group} {limit_type}"
+            if label in seen:
+                continue
+                
+            percent = None
+            reset_at = "__EMPTY__"
+            block = []
+            for look_ahead in lines[idx + 1 :]:
+                if look_ahead.endswith("MODELS") or look_ahead in ("Weekly Limit", "Five Hour Limit", "Daily Limit"):
+                    break
+                block.append(look_ahead)
+                
+            for look_ahead in block:
+                pct_match = re.search(r"\]\s*([0-9]+(?:\.[0-9]+)?)%", look_ahead)
+                if pct_match:
+                    percent = float(pct_match.group(1))
+                else:
+                    pct_match = re.search(r"([0-9]+(?:\.[0-9]+)?)%", look_ahead)
+                    if pct_match and percent is None:
+                        percent = float(pct_match.group(1))
+                        
+                refresh_match = re.search(r"Refreshes in ([A-Za-z0-9 ]+)", look_ahead)
+                if refresh_match:
+                    reset_at = f"in {refresh_match.group(1).strip()}"
+                    
+            if percent is not None:
+                rows.append((label, percent, reset_at))
+                seen.add(label)
             continue
-        if not model_header.match(line):
-            continue
-        percent = None
-        reset_at = "__EMPTY__"
-        block = []
-        for look_ahead in lines[idx + 1 :]:
-            if model_header.match(look_ahead):
-                break
-            block.append(look_ahead)
+            
+        # Old format logic
+        if current_group is None:
+            if line.startswith((">", "└", "↑/", "esc ", "(", "Antigravity CLI")):
+                continue
+            if "%" in line or line in ("Model Quota", "Quota available"):
+                continue
+            if not model_header.match(line):
+                continue
+            percent = None
+            reset_at = "__EMPTY__"
+            block = []
+            for look_ahead in lines[idx + 1 :]:
+                if model_header.match(look_ahead):
+                    break
+                block.append(look_ahead)
 
-        for look_ahead in block:
-            pct_match = re.search(r"([0-9]+(?:\.[0-9]+)?)%", look_ahead)
-            if pct_match:
-                percent = float(pct_match.group(1))
-            refresh_match = re.search(r"Refreshes in ([A-Za-z0-9 ]+)", look_ahead)
-            if refresh_match:
-                reset_at = f"in {refresh_match.group(1).strip()}"
-        if percent is None:
-            continue
-        rows.append((line, percent, reset_at))
-        seen.add(line)
+            for look_ahead in block:
+                pct_match = re.search(r"([0-9]+(?:\.[0-9]+)?)%", look_ahead)
+                if pct_match:
+                    percent = float(pct_match.group(1))
+                refresh_match = re.search(r"Refreshes in ([A-Za-z0-9 ]+)", look_ahead)
+                if refresh_match:
+                    reset_at = f"in {refresh_match.group(1).strip()}"
+            if percent is None:
+                continue
+            rows.append((line, percent, reset_at))
+            seen.add(line)
+            
     return rows
 
 
