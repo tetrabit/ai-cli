@@ -1552,7 +1552,6 @@ check_hermes() {
 }
 
 check_omx() {
-    echo -e "${CYAN}==> Checking Oh My Codex...${NC}"
     check_npm_package "Oh My Codex" "oh-my-codex" "omx"
 
     if command -v omx >/dev/null 2>&1; then
